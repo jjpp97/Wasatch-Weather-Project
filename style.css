@@ -1,0 +1,203 @@
+:root {
+  --bg: #0e1621;
+  --card: #16212f;
+  --border: #243246;
+  --text: #e6edf5;
+  --muted: #8b9bb0;
+  --accent: #6cc3ff;
+  --snow: #9fd8ff;
+  --rain: #3f8cff;
+  --warm: #ff8a5c;
+  --cold: #7aa8ff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.4;
+}
+
+a { color: var(--accent); }
+
+/* Site headline */
+.masthead { max-width: 1100px; margin: 0 auto; padding: 28px 16px 0; }
+.masthead h1 {
+  font-size: clamp(1.5rem, 4.2vw, 2.4rem);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--text); /* fallback where gradient text isn't supported */
+  background: linear-gradient(90deg, #ffffff 0%, var(--snow) 55%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.masthead::after {
+  content: "";
+  display: block;
+  width: 64px;
+  height: 3px;
+  margin-top: 12px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.loc-name { margin: 0 0 10px; font-size: 1.35rem; }
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 20px 16px 12px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* Forecast / Info switch in the header */
+.top-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.top-right p { margin: 0; }
+.tabs { display: flex; gap: 6px; }
+.tab {
+  font: inherit; font-size: 0.85rem; color: var(--muted); cursor: pointer;
+  background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px;
+}
+.tab:hover { border-color: var(--muted); }
+.tab.active { color: var(--text); border-color: var(--accent); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Info tab */
+.info .card { padding: 16px 18px 12px; }
+.info p, .info ul { margin: 0 0 10px; max-width: 75ch; font-size: 0.92rem; }
+.info ul { padding-left: 20px; }
+.info li { margin-bottom: 4px; }
+.info .eq {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.85rem;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+  max-width: none; overflow-x: auto;
+}
+
+h1 { margin: 0; font-size: 1.6rem; }
+h2 { margin: 0 0 10px; font-size: 1.05rem; }
+
+main { max-width: 1100px; margin: 0 auto; padding: 0 16px 32px; }
+
+.muted { color: var(--muted); }
+.small { font-size: 0.8rem; }
+.status { color: var(--muted); }
+.status.error { color: #ff7b7b; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 14px 10px;
+  margin-bottom: 16px;
+}
+
+/* Current-conditions tiles */
+.grid-now {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); /* 7 tiles fit one row on desktop */
+  gap: 8px;
+  margin-bottom: 16px;
+}
+/* A slim strip: the label on top, then the value with its detail beside it on one line */
+.tile {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 5px 10px 6px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 7px;
+  align-items: baseline;
+  align-content: start;
+}
+.tile .label { grid-column: 1 / -1; color: var(--muted); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.tile .value { font-size: 1.1rem; font-weight: 600; white-space: nowrap; }
+.tile .sub { color: var(--muted); font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tile.snow .value { color: var(--snow); }
+/* Snow tiles are buttons that set the chart time range */
+button.tile { font: inherit; color: inherit; text-align: left; width: 100%; cursor: pointer; }
+.tile.pick:hover { border-color: var(--muted); }
+.tile.pick.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.tile.pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Snow summary: a compact full-width chart with the period totals drawn above the bars */
+.chart-wrap.summary { height: 230px; }
+
+/* Charts */
+.chart-wrap { position: relative; height: 260px; }
+.chart-wrap.short { height: 200px; }
+.chart-wrap.tall { height: 360px; }
+
+/* Key to line styles under the snowfall chart */
+.line-key {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 20px;
+  margin: 8px 0 4px; font-size: 0.8rem; color: var(--muted);
+}
+.line-key span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.line-key svg { width: 34px; height: 10px; }
+.line-key line { stroke: #c9d4e2; }
+.line-key line.sky { stroke: url(#sky-gradient); }
+.line-key line.warm { stroke: #ff7a5c; }
+.line-key line.cold { stroke: #7aa8ff; }
+.chart-wrap.rose { height: 380px; }
+
+/* Two cards side by side (the wind roses); stacks on narrow screens */
+.grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-two > .card { min-width: 0; }
+@media (max-width: 760px) { .grid-two { grid-template-columns: 1fr; gap: 0; } }
+
+/* Daily table */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; white-space: nowrap; }
+th, td { padding: 7px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--muted); font-weight: 500; }
+td.snow { color: var(--snow); font-weight: 600; }
+td.rain { color: var(--rain); }
+.arrow { display: inline-block; }
+/* Station rows are buttons that pick which station's detail shows below */
+.pick-row { cursor: pointer; }
+.pick-row:hover td { background: rgba(139, 155, 176, 0.08); }
+.pick-row.active td { background: rgba(108, 195, 255, 0.12); }
+.pick-row.active td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.pick-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The reading-by-reading table scrolls inside its card, with the header row staying in view */
+.station-log { max-height: 460px; overflow-y: auto; }
+.station-log th { position: sticky; top: 0; background: var(--card); }
+.station-note { margin: 8px 0 4px; }
+.station-note:empty { display: none; }
+
+/* NWS periods */
+.nws-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+.nws-period {
+  flex: 0 0 170px;
+  background: #1b2838;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  font-size: 0.82rem;
+}
+.nws-period img { width: 48px; height: 48px; border-radius: 8px; float: right; margin-left: 6px; }
+.nws-period .name { font-weight: 600; }
+.nws-period .temp { font-size: 1.2rem; font-weight: 600; margin: 4px 0; }
+
+footer { margin-top: 8px; }
+
+@media (max-width: 600px) {
+  h1 { font-size: 1.3rem; }
+  .chart-wrap { height: 220px; }
+  .tile .value { font-size: 1.05rem; }
+}

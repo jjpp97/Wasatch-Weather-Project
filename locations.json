@@ -1,0 +1,42 @@
+[
+  {
+    "id": "alta-mid-collins",
+    "area": "Alta",
+    "name": "Mid-Collins",
+    "lat": 40.5763,
+    "lon": -111.6383,
+    "elevation_ft": 9662,
+    "timezone": "America/Denver",
+    "color": "#ffffff"
+  },
+  {
+    "id": "alta-base",
+    "area": "Alta",
+    "name": "Base",
+    "lat": 40.58796,
+    "lon": -111.63799,
+    "elevation_ft": 8560,
+    "timezone": "America/Denver",
+    "color": "#5fd3a3"
+  },
+  {
+    "id": "alta-top-of-collins",
+    "area": "Alta",
+    "name": "Top of Collins",
+    "lat": 40.57254,
+    "lon": -111.63175,
+    "elevation_ft": 10443,
+    "timezone": "America/Denver",
+    "color": "#6cc3ff"
+  },
+  {
+    "id": "alta-mt-baldy",
+    "area": "Alta",
+    "name": "Mt Baldy",
+    "lat": 40.5679,
+    "lon": -111.6375,
+    "elevation_ft": 11068,
+    "timezone": "America/Denver",
+    "color": "#ff8a5c"
+  }
+]
