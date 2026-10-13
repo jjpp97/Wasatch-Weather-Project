@@ -38,5 +38,45 @@
     "elevation_ft": 11068,
     "timezone": "America/Denver",
     "color": "#ff8a5c"
+  },
+  {
+    "id": "solitude-summit",
+    "area": "Solitude",
+    "name": "Summit",
+    "lat": 40.60081,
+    "lon": -111.60364,
+    "elevation_ft": 9641,
+    "timezone": "America/Denver",
+    "color": "#ffffff"
+  },
+  {
+    "id": "solitude-base",
+    "area": "Solitude",
+    "name": "Base",
+    "lat": 40.6191,
+    "lon": -111.5939,
+    "elevation_ft": 8200,
+    "timezone": "America/Denver",
+    "color": "#5fd3a3"
+  },
+  {
+    "id": "solitude-apex",
+    "area": "Solitude",
+    "name": "Apex",
+    "lat": 40.61379,
+    "lon": -111.60175,
+    "elevation_ft": 9061,
+    "timezone": "America/Denver",
+    "color": "#6cc3ff"
+  },
+  {
+    "id": "solitude-honeycomb-peak",
+    "area": "Solitude",
+    "name": "Honeycomb Peak",
+    "lat": 40.60167,
+    "lon": -111.61417,
+    "elevation_ft": 10488,
+    "timezone": "America/Denver",
+    "color": "#ff8a5c"
   }
 ]
