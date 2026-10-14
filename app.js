@@ -89,6 +89,59 @@ const AREA_KEY = (() => {
 })();
 const AREA = AREAS[AREA_KEY];
 
+// ---------- Downloads, kept for three minutes ----------
+// Every weather download goes through apiJson(). The answer is kept in the browser (its Cache
+// Storage, which survives closing the page) and reused for API_FRESH_MS, so reopening the page,
+// reloading it or switching resort inside three minutes asks the weather services for nothing.
+const API_FRESH_MS = 3 * 60 * 1000;
+const API_STORE = "wasatch-downloads-v1";
+const apiFetchedAt = new Map(); // address -> when its data was actually downloaded (ms)
+const apiStore = (async () => {
+  try {
+    const store = await caches.open(API_STORE);
+    // Clear out answers that are too old to be used again
+    for (const req of await store.keys()) {
+      const hit = await store.match(req);
+      if (!hit || Date.now() - Number(hit.headers.get("x-fetched-at")) >= API_FRESH_MS) store.delete(req);
+    }
+    return store;
+  } catch {
+    return null; // no Cache Storage (an old browser, or a page opened straight from a file): always download
+  }
+})();
+const apiPending = new Map(); // downloads under way, so two requests for one address share a download
+
+// The JSON at `url`, from the saved copy when it is under three minutes old. Throws if the
+// download fails. `options` are passed to fetch().
+function apiJson(url, options) {
+  const key = new URL(url, location.href).href;
+  if (!apiPending.has(key)) {
+    apiPending.set(key, (async () => {
+      const store = await apiStore;
+      if (store) {
+        const hit = await store.match(key);
+        const at = hit ? Number(hit.headers.get("x-fetched-at")) : 0;
+        if (hit && Date.now() - at < API_FRESH_MS) {
+          apiFetchedAt.set(key, at);
+          return hit.json();
+        }
+      }
+      const res = await fetch(key, options);
+      if (!res.ok) throw new Error(`${new URL(key).hostname} returned ${res.status}`);
+      const text = await res.text();
+      const data = JSON.parse(text);
+      const at = Date.now();
+      apiFetchedAt.set(key, at);
+      if (store) {
+        store.put(key, new Response(text, { headers: { "content-type": "application/json", "x-fetched-at": String(at) } }))
+          .catch(() => {}); // a full disk only costs the saving
+      }
+      return data;
+    })().finally(() => apiPending.delete(key)));
+  }
+  return apiPending.get(key);
+}
+
 const charts = {};
 let locations = [];   // this area's entries in locations.json; the first is the forecast point for the whole page
 let locRows = [];     // processed GFS forecast for each location, in the same order
@@ -133,14 +186,16 @@ async function main() {
   }
 }
 
-// The resort tabs at the top, and every piece of wording on the page that names the resort or
+// The resort's name and the menu of other resorts, and every piece of wording on the page that names the resort or
 // one of its forecast points. In index.html, <span data-fill="main"> is filled with the text
 // for "main" below, and an element with data-area="solitude" only shows on the Solitude page.
 function showArea() {
   document.title = `${AREA.name} · Wasatch Backcountry Ski Weather Forecast`;
+  document.getElementById("loc-name").textContent = AREA.name;
+  // The "Locations" menu lists every resort in AREAS, with the one being shown marked
   const nav = document.getElementById("areas");
   nav.innerHTML = Object.entries(AREAS).map(([key, a]) =>
-    `<a class="area${key === AREA_KEY ? " active" : ""}" href="?area=${key}"${key === AREA_KEY ? ' aria-current="page"' : ""}>${a.name}</a>`).join("");
+    `<a class="tab${key === AREA_KEY ? " active" : ""}" href="?area=${key}"${key === AREA_KEY ? ' aria-current="page"' : ""}>${a.name}</a>`).join("");
   // Switching resort keeps you on the tab you were looking at
   nav.onclick = e => { const a = e.target.closest("a"); if (a) a.href = a.getAttribute("href").split("#")[0] + location.hash; };
   document.querySelector(".tabs[data-area-pages]").setAttribute("aria-label", `${AREA.name} pages`);
@@ -200,15 +255,17 @@ async function getForecast(locs) {
     return "https://api.open-meteo.com/v1/forecast?" + p;
   };
 
-  let res = await fetch(build(HOURLY_VARS), { cache: "no-store" });
-  if (!res.ok) {
-    console.warn("Full variable set rejected, retrying with minimal set");
-    res = await fetch(build(HOURLY_VARS_MIN), { cache: "no-store" });
+  let url = build(HOURLY_VARS), data;
+  try {
+    data = await apiJson(url, { cache: "no-store" });
+  } catch (err) {
+    console.warn("Full variable set rejected, retrying with minimal set", err);
+    url = build(HOURLY_VARS_MIN);
+    data = await apiJson(url, { cache: "no-store" });
   }
-  if (!res.ok) throw new Error(`Open-Meteo returned ${res.status}`);
-  const data = await res.json();
+  // The time the forecast was downloaded, which can be up to three minutes before the page opened
   document.getElementById("updated").textContent =
-    "Updated " + new Date().toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+    "Updated " + new Date(apiFetchedAt.get(new URL(url).href) ?? Date.now()).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
   return [].concat(data); // a single location comes back as one object, several as a list
 }
 
@@ -224,9 +281,7 @@ async function loadModels(locs) {
       temperature_unit: "fahrenheit",
       wind_speed_unit: "mph",
     });
-    const res = await fetch("https://api.open-meteo.com/v1/forecast?" + p, { cache: "no-store" });
-    if (!res.ok) throw new Error(`Open-Meteo returned ${res.status}`);
-    modelData = [].concat(await res.json());
+    modelData = [].concat(await apiJson("https://api.open-meteo.com/v1/forecast?" + p, { cache: "no-store" }));
     if (allRows.length) {
       renderNow(allRows, currentObs); // snow tiles switch to the model average
       renderSummary();
@@ -299,7 +354,8 @@ function hourRows(h) {
       gust: get("wind_gusts_10m", i),
       dir: get("wind_direction_10m", i),
       isDay: get("is_day", i),
-      freezeFt: get("freezing_level_height", i) != null ? get("freezing_level_height", i) * 3.281 : null,
+      // Already in feet above sea level: asking Open-Meteo for inches switches its heights to feet too
+      freezeFt: get("freezing_level_height", i),
     });
   }
   return rows;
@@ -378,8 +434,9 @@ function renderNow(rows, current) {
   const tiles = [
     { label: "Now", value: `${r0(cur.temperature_2m ?? rows[0].temp)}°F`, sub: words,
       icon: symbol ? `<span class="wx-icon" aria-hidden="true">${symbol}</span>` : "", cls: "now" },
-    { label: "Wind", value: `${r0(cur.wind_speed_10m ?? rows[0].wind)} mph`,
-      sub: `${compass(cur.wind_direction_10m ?? rows[0].dir)} · G${r0(cur.wind_gusts_10m ?? rows[0].gust)}` }, // G = gust; kept short to fit the slim tile
+    // The direction the wind comes from sits beside the speed; gusts go underneath
+    { label: "Wind", value: `${r0(cur.wind_speed_10m ?? rows[0].wind)} mph <span class="wind-dir">${compass(cur.wind_direction_10m ?? rows[0].dir)}</span>`,
+      sub: `Gusts ${r0(cur.wind_gusts_10m ?? rows[0].gust)} mph`, cls: "wind" },
     { label: "Clouds", value: `${r0(cloudNow)}%`,
       sub: cloudNow == null ? "" : cloudNow < 25 ? "Clear" : cloudNow <= 50 ? "Partly cloudy" : cloudNow < 90 ? "Mostly cloudy" : "Overcast" },
     { label: "Next 24 h snow", value: `${r1(sum(24, "snow"))}"`, sub: water(24), cls: "snow", hours: 24 },
@@ -402,7 +459,7 @@ function renderNow(rows, current) {
   };
   // Current conditions go in the strip above the Snow Summary, the snow totals in the one below it
   const conditions = document.getElementById("conditions");
-  // The measured-snow boxes go in after these three; `contents` lets them sit in the same row
+  // The measured-snow box goes in after these three; `contents` lets it sit in the same row
   conditions.innerHTML = tiles.filter(t => !t.hours).map(tileHtml).join("") +
     '<div id="measured-tiles" style="display: contents"></div>';
   conditions.hidden = false;
@@ -449,12 +506,20 @@ let measured = null;  // { name, elevation_ft, newSnow: [{ t, inches }], latest 
 let snowStorms = [];  // the Snow Summary's storms as { from, to } day keys, set when it is drawn
 
 async function loadMeasured() {
-  const res = await fetch(AREA.snow.file, { cache: "no-store" });
-  if (!res.ok) throw new Error(`station data file returned ${res.status}`);
-  const file = await res.json();
+  const file = await apiJson(AREA.snow.file, { cache: "no-store" });
   const col = name => file.columns.indexOf(name);
-  const readings = file.rows.map(r => ({ t: Date.parse(r[col("time")]), board: r[col("snow_interval")], temp: r[col("air_temp")] }))
-    .filter(r => r.board != null && !Number.isNaN(r.t));
+  const all = file.rows.map(r => ({ t: Date.parse(r[col("time")]), board: r[col("snow_interval")], temp: r[col("air_temp")],
+    precip: col("precip_1h") < 0 ? null : r[col("precip_1h")] })).filter(r => !Number.isNaN(r.t));
+  const readings = all.filter(r => r.board != null);
+
+  // Snow water (SWE) from the station's precipitation gauge, where it has one: the water that
+  // fell in each hour, counted only while it was SNOW_MAX_F or colder at the station, since the
+  // gauge cannot tell snow from rain. Null for a station with no gauge.
+  const SNOW_MAX_F = 35;
+  const gauge = all.filter(r => r.precip != null);
+  const water = gauge.length
+    ? gauge.filter(r => r.precip > 0 && (r.temp == null || r.temp <= SNOW_MAX_F)).map(r => ({ t: r.t, inches: r.precip }))
+    : null;
 
   // New snow from the "snow interval" board, which staff clear from time to time. Snow is counted
   // whenever the board rises above its highest reading since it was last cleared. A drop of more
@@ -478,14 +543,17 @@ async function loadMeasured() {
     name: AREA.snow.name,
     elevation_ft: file.station.elevation_ft,
     newSnow,
+    water,
     first: readings.length ? readings[0].t : null,
     latest: readings.length ? readings[readings.length - 1].t : null,
   };
   refreshMeasuredTiles();
 }
 
-// The measured-snow boxes beside Now, Wind and Clouds: the most recent storm's total (the same
-// storm days as the Snow Summary) and the snow in the last 12 hours, 24 hours and 7 days.
+// The snow box beside Now, Wind and Clouds, as wide as those three together. Four periods side
+// by side: the most recent storm (the same storm days as the Snow Summary) and the last 12
+// hours, 24 hours and 7 days. Each shows the snow measured at the area's study plot and, smaller
+// underneath, the model's estimate of what fell at the forecast point over the same period.
 function refreshMeasuredTiles() {
   const box = document.getElementById("measured-tiles");
   const note = document.getElementById("measured-note");
@@ -493,39 +561,55 @@ function refreshMeasuredTiles() {
   if (!measured || measured.latest == null) { box.innerHTML = ""; note.textContent = ""; return; }
 
   const now = Date.now();
-  const total = keep => measured.newSnow.reduce((a, s) => a + (keep(s.t) ? s.inches : 0), 0);
-  const lastHours = h => total(t => t > now - h * 3600000);
-  const source = `${measured.name}, ${measured.elevation_ft.toLocaleString()} ft`;
-  const tiles = [];
+  const dayOf = hourKeyIn(locations[0].timezone); // "YYYY-MM-DDTHH:00" for a moment in time
+  const add = (list, keep) => list.reduce((a, s) => a + (keep(s.t) ? s.inches : 0), 0);
+  const total = keep => add(measured.newSnow, keep);
+  const swe = keep => (measured.water ? add(measured.water, keep) : null); // null: the station has no gauge
+  // The model's record of snow already fallen: every hour before the one under way
+  const past = allRows.length ? snowHistory.filter(r => r.time < allRows[0].time) : [];
+  const model = keep => (past.length ? past.reduce((a, r) => a + (keep(r.time) ? r.snow || 0 : 0), 0) : null);
+  const lastHours = (label, h) => {
+    const since = dayOf(now - h * 3600000);
+    const recent = t => t > now - h * 3600000;
+    return { label, measured: total(recent), swe: swe(recent), model: model(time => time >= since) };
+  };
+  const cols = [];
+  let partial = false;
 
   // The newest storm on the Snow Summary that has started: one under way, or else the last one
-  const dayOf = hourKeyIn(locations[0].timezone);
   const today = dayOf(now).slice(0, 10);
   const storm = [...snowStorms].reverse().find(s => s.from <= today);
   if (storm) {
     const md = k => `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}`;
     const dates = storm.from === storm.to ? md(storm.from) : `${md(storm.from)}–${md(storm.to)}`;
-    const inStorm = t => { const d = dayOf(t).slice(0, 10); return d >= storm.from && d <= storm.to; };
-    const cutShort = dayOf(measured.first).slice(0, 10) > storm.from; // the record starts after the storm did
-    tiles.push({ label: "Storm total", value: total(inStorm),
-      sub: `${dates} · ${cutShort ? "partial record · " : ""}${measured.name}` });
+    const inDays = day => day >= storm.from && day <= storm.to;
+    partial = dayOf(measured.first).slice(0, 10) > storm.from; // the measured record starts after the storm did
+    const inStorm = t => inDays(dayOf(t).slice(0, 10));
+    cols.push({ label: `Storm ${dates}`, measured: total(inStorm), swe: swe(inStorm),
+      model: model(time => inDays(time.slice(0, 10))) });
   }
-  tiles.push({ label: "Snow, last 12 h", value: lastHours(12), sub: measured.name });
-  tiles.push({ label: "Snow, last 24 h", value: lastHours(24), sub: measured.name });
-  tiles.push({ label: "Snow, last 7 days", value: lastHours(168), sub: measured.name });
+  cols.push(lastHours("Last 12 h", 12), lastHours("Last 24 h", 24), lastHours("Last 7 days", 168));
 
-  box.innerHTML = tiles.map(t => `
-    <div class="tile measured" title="Measured at the ${source}">
-      <div class="label">${t.label}</div>
-      <div class="value">${AREA.snow.tenths ? r1(t.value) : r0(t.value)}"</div>
-      <div class="sub">${t.sub}</div>
-    </div>`).join("");
+  const inches = v => `${AREA.snow.tenths ? r1(v) : r0(v)}"`;
+  box.innerHTML = `
+    <div class="tile snow-box" style="--cols: ${cols.length}"
+         title="Top: snow${measured.water ? " and snow water (SWE)" : ""} measured at the ${measured.name}, ${measured.elevation_ft.toLocaleString()} ft. Below: the model's snow estimate for ${locations[0].name}.">
+      ${cols.map(c => `<div class="snow-col">
+        <div class="label">${c.label}</div>
+        <div class="snow-line">
+          <span class="value">${inches(c.measured)}</span>
+          ${c.swe == null ? "" : `<span class="swe">${r2(c.swe)}" SWE</span>`}
+        </div>
+        <div class="model"><span class="model-word">model</span> ${c.model == null ? "–" : `${r1(c.model)}"`}</div>
+      </div>`).join("")}
+    </div>`;
 
   const when = new Date(measured.latest).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
   const hoursOld = (now - measured.latest) / 3600000;
-  note.textContent = `Storm total and snow in the last 12 hours, 24 hours and 7 days are measured at the ${source}` +
-    `, in ${AREA.snow.tenths ? "tenths of an inch" : "whole inches"}. Latest reading: ${when}` +
-    (hoursOld > 3 ? `, which is ${r0(hoursOld)} hours old, so recent snow may be missing.` : ".");
+  note.textContent = `Measured at the ${measured.name}, latest ${when}` +
+    (hoursOld > 3 ? ` (${r0(hoursOld)} hours old)` : "") +
+    (partial ? "; its record starts partway through the storm" : "") +
+    `. Small numbers: model estimate.`;
 }
 
 // ---------- Snow summary ----------
@@ -616,7 +700,7 @@ const PERIOD_BAND = 60;
 
 // Draws each storm's name and total in that strip, with a bracket spanning exactly the bars
 // it adds up. `sections` are { labels, value, from, to, past, split } with from/to as bar
-// positions; `split` is the "fallen · to come" line for a storm that is under way.
+// positions; `split` is the "already fallen" line for a storm that is under way.
 // `scroller` is the box the chart scrolls inside: a storm that is partly scrolled out of view
 // keeps its text centred over the part that can be seen, so its totals are always readable.
 function periodTotals(sections, fmt = r1, scroller = null) {
@@ -643,13 +727,13 @@ function periodTotals(sections, fmt = r1, scroller = null) {
         g.moveTo(left, y + 5); g.lineTo(left, y); g.lineTo(right, y); g.lineTo(right, y + 5);
         g.stroke();
         g.textBaseline = "bottom";
-        // Bottom line, only for a storm under way: how much has fallen and how much is still to come
+        // Bottom line, only for a storm under way: how much has already fallen
         let up = 0;
         if (s.split) {
-          g.font = "10.5px " + family;
-          g.fillStyle = "#c9d4e2";
+          g.font = "600 11.5px " + family;
+          g.fillStyle = "#e6edf5";
           g.fillText(s.split, mid, y - 3);
-          up = 14;
+          up = 15;
         }
         g.font = "600 15px " + family;
         g.fillStyle = s.past ? "#8b9bb0" : "#9fd8ff";
@@ -694,9 +778,7 @@ async function loadHistory(loc) {
     wind_speed_unit: "mph",
     precipitation_unit: "inch",
   });
-  const res = await fetch("https://historical-forecast-api.open-meteo.com/v1/forecast?" + p, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Open-Meteo archive returned ${res.status}`);
-  snowHistory = hourRows((await res.json()).hourly);
+  snowHistory = hourRows((await apiJson("https://historical-forecast-api.open-meteo.com/v1/forecast?" + p, { cache: "no-store" })).hourly);
   renderSummary();
   renderWater();
   if (allRows.length) renderCharts(allRows.slice(0, activeHours ?? allRows.length)); // the drifting roses use the history
@@ -744,13 +826,15 @@ function dailyChart(o) {
       const range = from === to ? md(keys[from]) : `${md(keys[from])}–${md(keys[to])}`;
       const stormDays = keys.slice(from, to + 1).map(k => o.days.get(k));
       const fallen = sum(stormDays.map(o.fallen)), toCome = sum(stormDays.map(o.toCome));
+      // A storm that has started but not finished: the big number is only what is still to
+      // come, and the line under it gives what has already fallen
+      const underWay = fallen >= o.min && toCome >= o.min;
       sections.push({
         from, to,
         labels: [`Storm ${range}`, range], // the longest that fits is used
-        value: fallen + toCome,
+        value: underWay ? toCome : fallen + toCome,
         past: to < ti, // entirely before today: a model estimate of what fell
-        // A storm that has started but not finished also shows how its total splits
-        split: fallen >= o.min && toCome >= o.min ? `${o.fmt(fallen)}" fallen · ${o.fmt(toCome)}" to come` : null,
+        split: underWay ? `${o.fmt(fallen)}" already fallen` : null,
       });
       from = null;
     }
@@ -1220,7 +1304,51 @@ function drawHourly() {
   }
   makeChart("chart-hourly", config);
   document.getElementById("hourly-key").innerHTML = key;
+  setSource("chart-hourly", HOURLY_SOURCES[dailyParam]);
 }
+
+// ---------- "Models:" line in the bottom right corner of each chart ----------
+// What each chart's numbers are based on. Keep in step with the charts themselves.
+const SNOW_MODELS = "GFS + HRRR, NBM, NAM";
+const ALL_MODELS = "GFS + HRRR, NBM, NAM, ECMWF AI";
+const STATION_SOURCE = "Source: station measurements, not a model";
+const CHART_SOURCES = {
+  "chart-summary": `Models: forecast is the average of ${SNOW_MODELS} · already fallen is the GFS + HRRR record`,
+  "chart-water": `Models: forecast is the average of ${SNOW_MODELS} · already fallen is the GFS + HRRR record`,
+  "chart-temp": "Model: GFS + HRRR",
+  "chart-wind": "Model: GFS + HRRR",
+  "chart-density": "Model: GFS + HRRR temperatures (Kuchera ratio)",
+  "chart-snow-level": "Model: GFS + HRRR freezing level",
+  "chart-snow-models": `Models: ${SNOW_MODELS}`,
+  "chart-cloud-models": `Models: ${ALL_MODELS}`,
+  "chart-temp-models": `Models: ${ALL_MODELS}`,
+  "chart-wind-models": `Models: ${ALL_MODELS}`,
+  "chart-st-wind": STATION_SOURCE,
+  "chart-st-rose": STATION_SOURCE,
+  "chart-st-temp": STATION_SOURCE,
+};
+// The Daily Forecast chart changes with the measure picked
+const HOURLY_SOURCES = {
+  precip: `Models: chance from NBM (GFS after day 11) · snow or rain from the average of ${SNOW_MODELS}`,
+  cloud: `Models: average of ${ALL_MODELS}`,
+  temp: "Model: GFS + HRRR",
+  feels: "Model: GFS + HRRR",
+  wind: "Model: GFS + HRRR",
+  ratio: `Models: snow from the average of ${SNOW_MODELS} · ratio from GFS + HRRR temperatures (Kuchera)`,
+};
+// Writes `text` as the small line at the bottom right of the card that holds the chart
+function setSource(canvasId, text) {
+  const card = document.getElementById(canvasId)?.closest(".card");
+  if (!card) return;
+  let line = card.querySelector(":scope > .source");
+  if (!line) {
+    line = document.createElement("p");
+    line.className = "source";
+    card.appendChild(line);
+  }
+  line.textContent = text || "";
+}
+Object.entries(CHART_SOURCES).forEach(([id, text]) => setSource(id, text));
 
 // ---------- Charts ----------
 Chart.defaults.color = "#8b9bb0";
@@ -1872,6 +2000,53 @@ function renderCharts(ahead) {
     })(),
     plugins: shade,
   });
+
+  // Snow level: the height above which precipitation falls as snow. The model gives the height
+  // of the freezing level (0°C); snow usually survives about SNOW_LEVEL_DROP_FT below that
+  // before melting to rain, so the snow level is drawn that far under it. The line is bright in
+  // the hours when precipitation is forecast, which is when it matters, and dim in dry hours:
+  // pale blue when it would fall as snow at the page's forecast point, and the page's rain
+  // green when it would fall as rain there (the same test as the Daily Forecast's bars).
+  // Flat lines mark the area's forecast points, to show which of them sit above the snow level.
+  const SNOW_LEVEL_DROP_FT = 1000;
+  const snowLevel = rows.map(r => (r.freezeFt == null ? null : r.freezeFt - SNOW_LEVEL_DROP_FT));
+  const wet = rows.map(r => (r.swe || 0) + (r.rain || 0) > 0.001);
+  const rainy = rows.map(r => (r.rain || 0) > 0.001 && (r.rain || 0) > (r.swe || 0));
+  const LEVEL = PRECIP_COLORS.snow, RAIN = PRECIP_COLORS.rain;
+  const feet = v => `${Math.round(v / 10) * 10}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + " ft";
+  makeChart("chart-snow-level", {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Snow level", data: snowLevel, borderColor: LEVEL, backgroundColor: LEVEL, borderWidth: 3, pointRadius: 0,
+          segment: { borderColor: ctx => (rainy[ctx.p1DataIndex] ? RAIN : wet[ctx.p1DataIndex] ? LEVEL : "rgba(159, 216, 255, 0.3)") } },
+        { label: "Freezing level", data: rows.map(r => r.freezeFt), borderColor: "rgba(255, 122, 92, 0.75)",
+          backgroundColor: "rgba(255, 122, 92, 0.75)", borderWidth: 1.2, borderDash: [5, 4], pointRadius: 0 },
+        ...byElevation.map(li => ({ label: `${locations[li].name} (${locations[li].elevation_ft.toLocaleString()} ft)`,
+          data: rows.map(() => locations[li].elevation_ft), borderColor: locations[li].color + "b3",
+          backgroundColor: locations[li].color, borderWidth: 1, pointRadius: 0, isGuide: true })),
+      ],
+    },
+    options: (() => {
+      const o = alignDays(baseOptions({ y: onRight({ title: { display: true, text: "feet" },
+        ticks: { callback: v => v.toLocaleString() } }) }));
+      o.plugins.tooltip.filter = item => !item.dataset.isGuide;
+      // The legend above the chart lists only the forecast points; the snow level and freezing
+      // level are in the key under the chart, which can show their line styles
+      o.plugins.legend.labels.filter = (item, data) => data.datasets[item.datasetIndex].isGuide;
+      o.plugins.tooltip.callbacks.label = ctx => `${ctx.dataset.label}: ${feet(ctx.parsed.y)}`;
+      o.plugins.tooltip.callbacks.afterBody = items => {
+        const i = items.length ? items[0].dataIndex : -1;
+        if (i < 0 || snowLevel[i] == null) return "";
+        const above = byElevation.filter(li => locations[li].elevation_ft >= snowLevel[i]).map(li => locations[li].name);
+        return [rainy[i] ? `Rain forecast at ${locations[0].name} this hour` : wet[i] ? `Snow forecast at ${locations[0].name} this hour` : "Dry this hour",
+          above.length ? `Above the snow level: ${above.join(", ")}` : "Every forecast point is below the snow level"];
+      };
+      return o;
+    })(),
+    plugins: shade,
+  });
 }
 
 // ---------- Weather stations (measured, not forecast) ----------
@@ -1888,9 +2063,7 @@ async function loadStations() {
     results = await Promise.all(AREA.stations.map(async s => {
       try {
         // 500 is the most the feed gives at once: 3.5 days at a reading every 10 minutes, more if less often
-        const r = await fetch(`https://api.weather.gov/stations/${s.id}/observations?limit=500`);
-        if (!r.ok) return { ...s, obs: [] };
-        const j = await r.json();
+        const j = await apiJson(`https://api.weather.gov/stations/${s.id}/observations?limit=500`);
         return { ...s, obs: (j.features || []).map(f => f.properties) }; // newest first
       } catch {
         return { ...s, obs: [] };
@@ -1901,8 +2074,7 @@ async function loadStations() {
     // to a file every hour (in °F, mph and inches), which is turned into the feed's shape here.
     let file = { columns: [], stations: {} };
     try {
-      const res = await fetch(AREA.stationFeed, { cache: "no-store" });
-      if (res.ok) file = await res.json();
+      file = await apiJson(AREA.stationFeed, { cache: "no-store" });
     } catch { /* every station is then listed as not reporting */ }
     const col = name => file.columns.indexOf(name);
     const from = (row, name, convert = v => v) => {
@@ -1941,7 +2113,17 @@ function renderStations(results) {
   const dayAgo = Date.now() - 24 * 3600 * 1000;
   const useful = x => x.temperature?.value != null || x.windSpeed?.value != null;
   const lately = s => s.obs.filter(x => useful(x) && new Date(x.timestamp).getTime() >= dayAgo).length;
-  const ranked = [...results].sort((a, b) => lately(b) - lately(a) || a.elevation_ft - b.elevation_ft);
+  // Ahead of that comes how many of those readings carried a wind or a snow measurement. A wind
+  // sensor stuck on zero all day counts for nothing; a snow sensor reading zero does count,
+  // since no snow is a real answer.
+  const windOrSnow = s => {
+    const day = s.obs.filter(x => new Date(x.timestamp).getTime() >= dayAgo);
+    const windWorks = day.some(x => x.windSpeed?.value > 0 || x.windGust?.value > 0);
+    return day.filter(x => (windWorks && x.windSpeed?.value != null) ||
+      x.snowBoard?.value != null || x.snowDepth?.value != null).length;
+  };
+  const ranked = [...results].sort((a, b) =>
+    windOrSnow(b) - windOrSnow(a) || lately(b) - lately(a) || a.elevation_ft - b.elevation_ft);
   for (const s of ranked) {
     const o = s.obs.find(useful);
     if (!o) { silent.push(s.name); continue; }
@@ -2017,39 +2199,189 @@ const ROSE_SPANS = [
   { hours: 6, label: "6 h" }, { hours: 12, label: "12 h" }, { hours: 24, label: "24 h" },
   { hours: 48, label: "48 h" }, { hours: 72, label: "72 h" },
 ];
-let stationRoseHours = 72;
+let stationRoseHours = 24;
 
-// The picked station's measured wind rose over the last `stationRoseHours` hours, with the
-// buttons that choose the period and a note saying what the rose actually covers
-function drawStationRose() {
+// The picked station's measured wind over the last `stationRoseHours` hours, hour by hour:
+// a bar chart (average speed in blue, with the hour's strongest gust rising above it in red and
+// an arrow for the direction), and under it a compass rose of where the wind came from.
+// The buttons above the bar chart choose the period for both.
+function drawStationWind() {
   const s = stationResults.find(r => r.id === activeStation);
   if (!s || !s.obs.length) return;
-  const time = o => new Date(o.timestamp).getTime();
-  const since = Date.now() - stationRoseHours * 3600000;
-  const picked = s.obs.filter(o => time(o) >= since && o.windSpeed?.value != null && o.windDirection?.value != null);
-  makeWindRose("chart-st-rose",
-    picked.map(o => ({ dir: o.windDirection.value, wind: kmhToMph(o.windSpeed.value) })), "readings");
+  const HOUR = 3600000;
+  const hours = stationRoseHours;
+  const start = Math.floor(Date.now() / HOUR) * HOUR - (hours - 1) * HOUR; // the last bar is the hour under way
+
+  // Readings gathered into hours: mean speed, strongest gust, and direction weighted by speed
+  const bins = Array.from({ length: hours }, (_, i) => ({ t: start + i * HOUR, n: 0, wind: 0, gust: null, x: 0, y: 0, dirs: 0 }));
+  let used = 0;
+  for (const o of s.obs) {
+    const b = bins[Math.floor((new Date(o.timestamp).getTime() - start) / HOUR)];
+    if (!b) continue;
+    if (o.windSpeed?.value != null) {
+      const mph = kmhToMph(o.windSpeed.value);
+      b.n += 1; b.wind += mph; used += 1;
+      if (o.windDirection?.value != null) {
+        const rad = o.windDirection.value * Math.PI / 180;
+        b.x += Math.sin(rad) * (mph || 0.1); b.y += Math.cos(rad) * (mph || 0.1); b.dirs += 1;
+      }
+    }
+    if (o.windGust?.value != null) b.gust = Math.max(b.gust ?? 0, kmhToMph(o.windGust.value));
+  }
+  const avg = bins.map(b => (b.n ? b.wind / b.n : null));
+  const gust = bins.map((b, i) => (b.gust == null ? null : Math.max(b.gust, avg[i] ?? 0)));
+  // A calm hour has no direction worth drawing (stations report 0° when the vane is still)
+  const dir = bins.map((b, i) => (b.dirs && avg[i] >= 0.5 ? (Math.atan2(b.x, b.y) * 180 / Math.PI + 360) % 360 : null));
+  const labels = bins.map(b => localKey(new Date(b.t)));
 
   const bar = document.getElementById("st-rose-range");
-  bar.innerHTML = '<span class="muted small">Roses cover the last</span>' +
-    ROSE_SPANS.map(p => `<button type="button" class="range-btn${p.hours === stationRoseHours ? " active" : ""}"
-      data-span="${p.hours}" aria-pressed="${p.hours === stationRoseHours}">${p.label}</button>`).join("");
+  bar.innerHTML = '<span class="muted small">Wind charts cover the last</span>' +
+    ROSE_SPANS.map(p => `<button type="button" class="range-btn${p.hours === hours ? " active" : ""}"
+      data-span="${p.hours}" aria-pressed="${p.hours === hours}">${p.label}</button>`).join("");
   bar.onclick = e => {
     const btn = e.target.closest("[data-span]");
     if (!btn) return;
     stationRoseHours = Number(btn.dataset.span);
-    drawStationRose();
+    drawStationWind();
   };
 
-  // Say plainly when the station's record is shorter than the period asked for
-  const when = t => new Date(t).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-  const oldest = time(s.obs[s.obs.length - 1]);
-  document.getElementById("st-rose-note").textContent = !picked.length
-    ? "No wind readings in this period."
-    : `${picked.length} readings since ${when(time(picked[picked.length - 1]))}.` +
-      (oldest > since + 3600000 ? ` This station's available readings only go back to ${when(oldest)}.` : "");
+  // Bars touch, like a histogram. The red part is stacked on the blue, so its top is the gust.
+  const every = Math.max(1, Math.ceil(hours / 40)); // an arrow on every bar until they would overlap
+  const options = stationOptions(labels, { beginAtZero: true, stacked: true, title: { display: true, text: "mph" } },
+    hours <= 12 ? 1 : hours <= 24 ? 3 : 6);
+  options.scales.x.stacked = true;
+  options.plugins.tooltip.callbacks.label = ctx => {
+    const i = ctx.dataIndex;
+    if (ctx.dataset.label === "Direction") return `From ${compass(dir[i])} (${r0(dir[i])}°)`;
+    return ctx.dataset.label === "Gusts" ? `Gusts: ${r0(gust[i])} mph` : `Ave.: ${r0(avg[i])} mph`;
+  };
+  options.plugins.legend.labels.filter = item => item.text !== "Direction";
+  options.scales.y.grace = "12%"; // headroom for the letters over the top arrows
+  // The compass point the wind came from, written over each arrow
+  const dirLetters = {
+    id: "dirLetters",
+    afterDatasetsDraw(chart) {
+      const g = chart.ctx;
+      g.save();
+      g.font = "600 10px " + Chart.defaults.font.family;
+      g.textAlign = "center";
+      g.textBaseline = "bottom";
+      g.fillStyle = "#c9d4e2";
+      chart.getDatasetMeta(2).data.forEach((pt, i) => {
+        if (chart.data.datasets[2].data[i] != null) g.fillText(compass(dir[i]), pt.x, pt.y - 10);
+      });
+      g.restore();
+    },
+  };
+  makeChart("chart-st-wind", {
+    type: "bar",
+    plugins: [dirLetters],
+    data: {
+      labels,
+      datasets: [
+        { label: "Ave.", data: avg, backgroundColor: "#5aa0e6", categoryPercentage: 1, barPercentage: 1 },
+        { label: "Gusts", data: gust.map((g, i) => (g == null ? null : g - (avg[i] ?? 0))), backgroundColor: "#f08c8c",
+          categoryPercentage: 1, barPercentage: 1 },
+        // Arrows point where the wind is blowing toward. Their own "stack" keeps them out of the bars' sum.
+        { type: "line", label: "Direction", stack: "arrows", showLine: false,
+          data: bins.map((_, i) => (i % every === 0 && dir[i] != null ? (gust[i] ?? avg[i] ?? 0) + 3 : null)),
+          pointStyle: arrowImage(), pointRadius: 9, rotation: ctx => ((dir[ctx.dataIndex] ?? 0) + 180) % 360 },
+      ],
+    },
+    options,
+  });
 
-  drawStationDrift(); // the drifting rose beside it covers the same period
+  // Miles of wind: an hour at 10 mph is 10 miles of air going past. Split by where it came from.
+  const sectors = DIRS.map(() => 0);
+  let miles = 0;
+  bins.forEach((b, i) => {
+    if (avg[i] == null) return;
+    miles += avg[i];
+    if (dir[i] != null) sectors[sectorOf(dir[i])] += avg[i];
+  });
+  makeArrowRose("chart-st-rose", sectors);
+
+  const span = hours === 1 ? "hour" : `${hours} hrs`;
+  const top = sectors.map((m, i) => ({ m, name: DIRS[i] })).filter(x => x.m >= 0.5).sort((a, b) => b.m - a.m).slice(0, 3);
+  const when = ms => new Date(ms).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const oldest = new Date(s.obs[s.obs.length - 1].timestamp).getTime();
+  document.getElementById("st-rose-note").innerHTML = !used
+    ? "No wind readings in this period."
+    : `<b>${r0(miles)} miles of wind in ${span}.</b> ` +
+      (top.length ? `Mostly from ${top.map(x => `${x.name} (${r0(x.m)} mi)`).join(", ")}. ` : "") +
+      `${used} readings.` +
+      (oldest > start + HOUR ? ` This station's available readings only go back to ${when(oldest)}.` : "");
+
+  drawStationDrift(); // the wind loading rose, when it is on the page, covers the same period
+}
+
+// A compass rose in the style of Alta's own wind page: an arrow sits on the rim at each direction
+// the wind came from and points inward, the way the wind blew. Its length is that direction's
+// share of the miles of wind, with the busiest direction reaching the centre. `sectors` holds the
+// miles from each of the sixteen directions in DIRS. Drawn by hand, since Chart.js has no such chart.
+function makeArrowRose(id, sectors) {
+  if (charts[id]) charts[id].destroy();
+  const canvas = document.getElementById(id);
+  const draw = () => {
+    const box = canvas.parentElement.getBoundingClientRect();
+    if (!box.width || !box.height) return; // hidden tab: drawn when it is shown again
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(box.width * dpr);
+    canvas.height = Math.round(box.height * dpr);
+    canvas.style.width = `${box.width}px`;
+    canvas.style.height = `${box.height}px`;
+    const g = canvas.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, box.width, box.height);
+    const cx = box.width / 2, cy = box.height / 2;
+    const R = Math.max(40, Math.min(box.width, box.height) / 2 - 34);
+
+    // Rings: grey rim, green and orange inside it, a red dot at the centre
+    const ring = (r, color, width) => { g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.strokeStyle = color; g.lineWidth = width; g.stroke(); };
+    ring(R, "#8b9bb0", 2);
+    ring(R * 0.62, "#4caf6a", 2);
+    ring(R * 0.3, "#e08a3c", 2);
+    ring(2.5, "#ff5c5c", 2);
+
+    // Compass letters: the four main points large, the four between them small
+    g.fillStyle = "#e6edf5";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    DIRS.forEach((name, i) => {
+      if (i % 2) return;
+      const a = i * 22.5 * Math.PI / 180, main = i % 4 === 0;
+      g.font = `${main ? "600 17px" : "11px"} ${Chart.defaults.font.family}`;
+      const d = R + (main ? 17 : 15);
+      g.fillText(name, cx + Math.sin(a) * d, cy - Math.cos(a) * d);
+    });
+
+    const total = sectors.reduce((a, b) => a + b, 0), most = Math.max(...sectors);
+    if (!(most > 0)) return;
+    g.strokeStyle = g.fillStyle = "#6c8cff";
+    g.lineWidth = 2.5;
+    g.lineCap = "round";
+    sectors.forEach((m, i) => {
+      if (m < total * 0.02) return; // leave out directions with next to no wind
+      const a = i * 22.5 * Math.PI / 180, ux = Math.sin(a), uy = -Math.cos(a);
+      const len = Math.max(11, R * m / most);
+      const tx = cx + ux * R, ty = cy + uy * R;                   // tail on the rim
+      const hx = cx + ux * (R - len), hy = cy + uy * (R - len);   // head toward the centre
+      g.beginPath(); g.moveTo(tx, ty); g.lineTo(hx + ux * 6, hy + uy * 6); g.stroke();
+      // Arrowhead with a notched back, pointing inward
+      const px = -uy, py = ux;
+      g.beginPath();
+      g.moveTo(hx, hy);
+      g.lineTo(hx + ux * 11 + px * 6, hy + uy * 11 + py * 6);
+      g.lineTo(hx + ux * 7, hy + uy * 7);
+      g.lineTo(hx + ux * 11 - px * 6, hy + uy * 11 - py * 6);
+      g.closePath();
+      g.fill();
+    });
+  };
+  draw();
+  window.addEventListener("resize", draw);
+  // Stands in for a Chart.js chart, so the page's "refit every chart" and "replace this chart" code works on it
+  charts[id] = { resize: draw, draw, destroy() { window.removeEventListener("resize", draw); } };
 }
 
 // Hour-by-hour model record at each station's own location (snow, temperature, wind), fetched
@@ -2071,8 +2403,7 @@ function loadStationHistory(s) {
       precipitation_unit: "inch",
       wind_speed_unit: "mph",
     });
-    stationHistory[s.id] = fetch("https://historical-forecast-api.open-meteo.com/v1/forecast?" + p, { cache: "no-store" })
-      .then(res => { if (!res.ok) throw new Error(`Open-Meteo archive returned ${res.status}`); return res.json(); })
+    stationHistory[s.id] = apiJson("https://historical-forecast-api.open-meteo.com/v1/forecast?" + p, { cache: "no-store" })
       .then(j => hourRows(j.hourly));
     stationHistory[s.id].catch(() => { delete stationHistory[s.id]; }); // let a later click try again
   }
@@ -2095,6 +2426,8 @@ const hourKeyIn = tz => {
 async function drawStationDrift() {
   const s = stationResults.find(r => r.id === activeStation);
   const note = document.getElementById("st-drift-note");
+  // Off the page for now: nothing is fetched or drawn until its canvas is put back in index.html
+  if (!document.getElementById("chart-st-drift") || !note) return;
   if (!s || !s.obs.length) return;
   const asked = { id: s.id, hours: stationRoseHours };
   note.textContent = "Loading the model's snowfall for this location…";
@@ -2199,34 +2532,9 @@ function showStation(id) {
   const obs = s.obs.slice().reverse(); // oldest first for the charts
   const labels = obs.map(o => localKey(new Date(o.timestamp)));
   const get = (o, key, convert) => (o[key]?.value == null ? null : convert(o[key].value));
-  const wind = obs.map(o => get(o, "windSpeed", kmhToMph));
-  const gust = obs.map(o => get(o, "windGust", kmhToMph));
-  const dir = obs.map(o => get(o, "windDirection", v => v));
   const temp = obs.map(o => get(o, "temperature", cToF));
 
-  const every = Math.max(1, Math.round(obs.length / 40)); // about 40 direction arrows across the chart
-  const windOptions = stationOptions(labels, { beginAtZero: true, title: { display: true, text: "mph" } });
-  windOptions.plugins.tooltip.callbacks.label = ctx => (ctx.dataset.label === "Direction"
-    ? `From ${compass(dir[ctx.dataIndex])} (${r0(dir[ctx.dataIndex])}°)`
-    : `${ctx.dataset.label}: ${r0(ctx.parsed.y)} mph`);
-  windOptions.plugins.legend.labels.filter = item => item.text !== "Direction";
-  makeChart("chart-st-wind", {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        { label: "Wind", data: wind, borderColor: "#6cc3ff", backgroundColor: "rgba(108,195,255,0.15)",
-          fill: true, borderWidth: 2, pointRadius: 0, spanGaps: true },
-        { label: "Gusts", data: gust, borderColor: "#ff6b8b", borderWidth: 1.2, pointRadius: 0, spanGaps: true },
-        // Arrows point where the wind is blowing toward, like the forecast wind chart
-        { label: "Direction", data: obs.map((_, i) => (i % every === 0 && dir[i] != null ? (gust[i] ?? wind[i] ?? 0) + 4 : null)),
-          showLine: false, pointStyle: arrowImage(), pointRadius: 9, rotation: ctx => ((dir[ctx.dataIndex] ?? 0) + 180) % 360 },
-      ],
-    },
-    options: windOptions,
-  });
-
-  drawStationRose(); // measured wind rose, over the period picked in its corner
+  drawStationWind(); // hourly wind bars and the wind rose, over the period picked above them
 
   const tempOptions = stationOptions(labels, { title: { display: true, text: "°F" } });
   tempOptions.plugins.tooltip.callbacks.label = ctx => `${ctx.dataset.label}: ${r0(ctx.parsed.y)}°F`;
@@ -2249,6 +2557,7 @@ function showStation(id) {
   document.getElementById("st-extra").innerHTML = extras.map(m => `<section class="card">
       <h2>${m.head} <span class="muted small">(${s.name} · ${s.elevation_ft.toLocaleString()} ft)</span></h2>
       <div class="chart-wrap"><canvas id="chart-st-x-${m.key}"></canvas></div>
+      <p class="source">${STATION_SOURCE}</p>
     </section>`).join("");
   for (const m of extras) {
     const options = stationOptions(labels, { beginAtZero: !!m.zero, title: { display: true, text: m.unit } }, 12);
@@ -2305,9 +2614,7 @@ async function checkRidgeWind(results) {
     forecast_days: 1,
     wind_speed_unit: "mph",
   });
-  const res = await fetch("https://api.open-meteo.com/v1/forecast?" + p, { cache: "no-store" });
-  if (!res.ok) return;
-  const h = (await res.json()).hourly;
+  const h = (await apiJson("https://api.open-meteo.com/v1/forecast?" + p, { cache: "no-store" })).hourly;
   const pairs = [];
   h.time.forEach((t, i) => {
     const seen = byHour[t.slice(0, 13)];
@@ -2321,14 +2628,38 @@ async function checkRidgeWind(results) {
     `and was off by about ${r0(miss)} mph in a typical hour.`;
 }
 
+// ---------- Refresh button beside the location's name ----------
+// Reloading the page gathers everything again for every tab of this location (forecast, model
+// results, weather stations), and apiJson() only really downloads what is over three minutes
+// old. If nothing is that old yet, a reload would change nothing, so the button just says so.
+document.getElementById("refresh").addEventListener("click", () => {
+  const times = [...apiFetchedAt.values()];
+  const oldest = times.length ? Math.min(...times) : 0;
+  const wait = API_FRESH_MS - (Date.now() - oldest);
+  if (wait <= 0) { location.reload(); return; }
+  const note = document.getElementById("refresh-note");
+  const mins = Math.ceil(wait / 60000);
+  note.textContent = `Up to date. New data can be fetched in ${mins} minute${mins === 1 ? "" : "s"}.`;
+  clearTimeout(note.timer);
+  note.timer = setTimeout(() => { note.textContent = ""; }, 5000);
+});
+
 // ---------- Forecast / Info tabs ----------
-document.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", () => {
+// The drop-down menus (Switch resort, Guide & Info) also close on a click anywhere else, or on Escape
+const infoMenu = document.getElementById("info-menu");
+const menus = [...document.querySelectorAll("details.menu")];
+document.addEventListener("click", e => menus.forEach(m => { if (!m.contains(e.target)) m.open = false; }));
+document.addEventListener("keydown", e => { if (e.key === "Escape") menus.forEach(m => { m.open = false; }); });
+document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener("click", () => {
   const view = btn.dataset.view;
   for (const v of ["forecast", "metrics", "models", "stations", "guide", "info"]) document.getElementById(`view-${v}`).hidden = v !== view;
-  document.querySelectorAll(".tab").forEach(b => {
+  document.querySelectorAll(".tab[data-view]").forEach(b => {
     b.classList.toggle("active", b === btn);
     b.setAttribute("aria-pressed", b === btn);
   });
+  // The Guide & Info menu closes after a pick, and its button lights up while one of its pages is showing
+  infoMenu.open = false;
+  infoMenu.querySelector("summary").classList.toggle("active", view === "guide" || view === "info");
   // Keep the tab in the address, so a reload or a switch of resort comes back to it
   history.replaceState(null, "", location.pathname + location.search + (view === "forecast" ? "" : `#${view}`));
   // Charts can't measure themselves while hidden, so refit them when their tab comes back
@@ -2341,11 +2672,8 @@ if (["#metrics", "#models", "#stations", "#guide", "#info"].includes(location.ha
 async function loadNws(loc) {
   const box = document.getElementById("nws");
   try {
-    const point = await fetch(`https://api.weather.gov/points/${loc.lat},${loc.lon}`).then(r => {
-      if (!r.ok) throw new Error(`NWS ${r.status}`);
-      return r.json();
-    });
-    const fc = await fetch(point.properties.forecast).then(r => r.json());
+    const point = await apiJson(`https://api.weather.gov/points/${loc.lat},${loc.lon}`);
+    const fc = await apiJson(point.properties.forecast);
 
     box.innerHTML = fc.properties.periods.map(p => `
       <div class="nws-period" title="${p.detailedForecast.replace(/"/g, "&quot;")}">

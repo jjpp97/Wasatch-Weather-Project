@@ -61,16 +61,16 @@ a { color: var(--accent); }
   border-radius: 2px;
   background: var(--accent);
 }
-.loc-name { margin: 0 0 10px; font-size: 1.35rem; }
-/* Resort tabs: the resort being shown is white and underlined, the others are grey links */
-.areas { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0 0 10px; min-height: 2rem; }
-.area {
-  font-size: 1.35rem; font-weight: 700; line-height: 1.3; color: var(--muted); text-decoration: none;
-  border-bottom: 3px solid transparent;
+.loc-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+.loc-name { margin: 0; font-size: 1.35rem; }
+/* Small round refresh button beside the location's name */
+.refresh {
+  width: 26px; height: 26px; padding: 0; border-radius: 50%; cursor: pointer;
+  font: inherit; font-size: 1rem; line-height: 1; color: var(--muted);
+  background: var(--card); border: 1px solid var(--border);
 }
-.area:hover { color: var(--text); }
-.area.active { color: var(--text); border-bottom-color: var(--accent); }
-.area:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.refresh:hover { color: var(--text); border-color: var(--muted); }
+.refresh:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Wording that belongs to another resort */
 [data-area][hidden] { display: none !important; }
 
@@ -97,6 +97,25 @@ a { color: var(--accent); }
 .tab.active { color: var(--text); border-color: var(--accent); }
 .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tabs { flex-wrap: wrap; }
+
+/* Guide & Info drop-down in the top right corner */
+.menu { position: relative; }
+.menu summary { list-style: none; user-select: none; }
+.menu summary::-webkit-details-marker { display: none; }
+.menu .caret { font-size: 0.75em; margin-left: 2px; }
+.menu[open] summary { color: var(--text); border-color: var(--muted); }
+.menu-list {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 30;
+  display: flex; flex-direction: column; gap: 2px; min-width: 170px; padding: 6px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+/* Locations menu: pinned to the very top right corner of the page */
+.masthead { position: relative; }
+.area-menu { position: absolute; top: 14px; right: 16px; }
+.menu-list .tab { display: block; text-decoration: none; border: 0; border-radius: 8px; padding: 9px 12px; text-align: left; background: transparent; white-space: nowrap; }
+.menu-list .tab:hover, .menu-list .tab.active { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.menu-list a.tab.active::after { content: "✓"; float: right; margin-left: 14px; color: var(--accent); } /* the location being shown */
 
 /* Quick Guide: each explanation sits beside the colour, line or symbol it is about */
 .guide h3 { margin: 16px 0 6px; font-size: 0.95rem; color: var(--accent); }
@@ -201,6 +220,11 @@ main { max-width: 1100px; margin: 0 auto; padding: 0 16px 32px; }
 }
 .tile .label { grid-column: 1 / -1; color: var(--muted); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.04em; }
 .tile .value { font-size: 1.1rem; font-weight: 600; white-space: nowrap; }
+.tile .wind-dir { font-size: 0.85em; color: var(--accent); margin-left: 2px; } /* where the wind comes from */
+/* Wind box: speed and direction on one line, gusts on a line of their own, so nothing is cut off.
+   If the box is too narrow even for that, the direction drops below the speed. */
+.tile.wind .value { grid-column: 1 / -1; white-space: normal; }
+.tile.wind .sub { grid-column: 1 / -1; white-space: normal; overflow: visible; text-overflow: clip; }
 .tile .sub { color: var(--muted); font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* Weather symbol in the top-right corner of the Now tile, level with its label, so it takes
    no room from the temperature and description */
@@ -210,8 +234,23 @@ main { max-width: 1100px; margin: 0 auto; padding: 0 16px 32px; }
 .tile .wx-icon { position: absolute; top: 3px; right: 8px; font-size: 1rem; line-height: 1.2; }
 .tile.snow .value { color: var(--snow); }
 /* Measured snow boxes: a solid left edge marks them as measurements, and the source line may wrap */
-.tile.measured { border-left: 3px solid var(--snow); }
-.tile.measured .sub { white-space: normal; overflow: visible; text-overflow: clip; }
+/* Current conditions row: Now, Wind and Clouds take half the width, the snow box the other half */
+#conditions { grid-template-columns: repeat(6, 1fr); }
+/* Snow box: one column per period. Measured snow in the snow colour, the model's estimate small below it. */
+.tile.snow-box {
+  grid-column: span 3;
+  grid-template-columns: repeat(var(--cols, 4), 1fr);
+  column-gap: 10px;
+  border-left: 3px solid var(--snow);
+}
+.snow-col { min-width: 0; }
+.snow-col .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.snow-col .value { color: var(--snow); }
+/* The measured snow with the station's snow water (SWE) small beside it; the SWE drops below if there is no room */
+.snow-line { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 5px; }
+.snow-col .swe { color: #4f9dff; font-size: 0.68rem; font-weight: 600; white-space: nowrap; } /* darker blue than the snow number */
+.snow-col .model { color: #c9d4e2; font-size: 0.82rem; font-weight: 500; white-space: nowrap; }
+.snow-col .model-word { color: var(--muted); font-size: 0.62rem; font-weight: 400; } /* the word, smaller than its number */
 .measured-note { margin: -8px 0 14px; }
 .measured-note:empty { display: none; }
 /* Snow tiles are buttons that set the chart time range */
@@ -301,6 +340,9 @@ td.rain { color: var(--rain); }
 .station-log th { position: sticky; top: 0; background: var(--card); }
 .station-note { margin: 8px 0 4px; }
 .station-note:empty { display: none; }
+/* What a chart's numbers are based on: small text in the card's bottom right corner */
+.source { margin: 6px 0 0; text-align: right; font-size: 0.68rem; line-height: 1.35; color: var(--muted); }
+.source:empty { display: none; }
 /* Charts moved to the bottom because the station's sensor reads only zero */
 .card.sensor-flat, .sensor-flat .card { background: #2b151a; border-color: #5c2a33; }
 
@@ -342,6 +384,7 @@ footer { margin-top: 8px; }
   /* The three current-conditions tiles share one row; the snow tiles sit two to a row */
   .grid-now { grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 12px; }
   #conditions { grid-template-columns: repeat(3, 1fr); }
+  .tile.snow-box { column-gap: 6px; } /* the snow box takes a full row of its own under the three */
   #conditions .tile .sub { display: none; } /* no room for the detail at a third of the width */
   /* ...except the weather description, which goes on its own line under the temperature */
   #conditions .tile.now .sub { display: block; grid-column: 1 / -1; }
@@ -351,4 +394,7 @@ footer { margin-top: 8px; }
   .chart-wrap.rose { height: 300px; }
   .line-key { gap: 4px 12px; font-size: 0.72rem; }
   .tab { padding: 6px 11px; }
+  #info-menu .menu-list { right: auto; left: 0; } /* this menu's button wraps to the left edge on a phone */
+  .area-menu { top: 8px; right: 10px; }
+  .masthead { padding-top: 46px; } /* room for the Locations button above the title */
 }
