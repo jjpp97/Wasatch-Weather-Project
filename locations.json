@@ -78,5 +78,45 @@
     "elevation_ft": 10488,
     "timezone": "America/Denver",
     "color": "#ff8a5c"
+  },
+  {
+    "id": "deer-valley-ontario",
+    "area": "Deer Valley",
+    "name": "Ontario",
+    "lat": 40.609141,
+    "lon": -111.497424,
+    "elevation_ft": 9100,
+    "timezone": "America/Denver",
+    "color": "#ffffff"
+  },
+  {
+    "id": "deer-valley-base",
+    "area": "Deer Valley",
+    "name": "Snow Park Base",
+    "lat": 40.634029,
+    "lon": -111.479465,
+    "elevation_ft": 7333,
+    "timezone": "America/Denver",
+    "color": "#5fd3a3"
+  },
+  {
+    "id": "deer-valley-bald-eagle",
+    "area": "Deer Valley",
+    "name": "Bald Eagle",
+    "lat": 40.6236,
+    "lon": -111.4809,
+    "elevation_ft": 8400,
+    "timezone": "America/Denver",
+    "color": "#6cc3ff"
+  },
+  {
+    "id": "deer-valley-empire-peak",
+    "area": "Deer Valley",
+    "name": "Empire Peak",
+    "lat": 40.6119,
+    "lon": -111.5272,
+    "elevation_ft": 9570,
+    "timezone": "America/Denver",
+    "color": "#ff8a5c"
   }
 ]

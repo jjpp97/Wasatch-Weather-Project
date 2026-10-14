@@ -12,19 +12,47 @@
 </head>
 <body>
   <div class="masthead">
-    <!-- Drop-down in the very top right corner for changing location; app.js lists every resort in it -->
+    <!-- The two drop-downs in the top right corner of the page, one under the other -->
+    <div class="corner-menus">
+    <!-- Locations: app.js lists every resort in it -->
     <details id="area-menu" class="menu area-menu">
       <summary class="tab burger" aria-label="Locations menu" title="Locations">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
       </summary>
-      <nav id="areas" class="menu-list" aria-label="Locations"></nav>
+      <nav class="menu-list" aria-label="Locations">
+        <!-- Every resort's measured snow on one page (renderStormResults in app.js) -->
+        <button type="button" class="tab" data-view="storms" aria-pressed="false">Storm Results</button>
+        <!-- Every resort's Snow Summary on one page (renderMountainForecasts in app.js) -->
+        <button type="button" class="tab" data-view="mountains" aria-pressed="false">Mountain Forecasts</button>
+        <div class="menu-sep" role="separator"></div>
+        <div id="areas"></div>
+        <div class="menu-sep" role="separator"></div>
+        <!-- UDOT's canyon road cameras (CAMERA_GROUPS in app.js) -->
+        <button type="button" class="tab" data-view="cameras" aria-pressed="false">UDOT Cameras</button>
+      </nav>
     </details>
+    <!-- Drop-down menu holding the two "about this page" tabs; app.js closes it after a pick -->
+    <details id="info-menu" class="menu">
+      <summary class="tab" aria-label="Guide and info menu">Guide &amp; Info <span class="caret" aria-hidden="true">▾</span></summary>
+      <nav class="menu-list" aria-label="About this page">
+        <button type="button" class="tab" data-view="guide" aria-pressed="false">Quick Guide</button>
+        <button type="button" class="tab" data-view="info" aria-pressed="false">Detailed Info</button>
+      </nav>
+    </details>
+    </div>
     <h1>Wasatch Backcountry Ski Weather Forecast</h1>
   </div>
 
   <header class="top">
     <div>
       <!-- The resort being shown; the "Locations" menu at the top of the page switches to another -->
+      <!-- Shown instead of the resort's name and tabs while Storm Results or UDOT Cameras is open -->
+      <div class="global-row">
+        <h2 id="global-title" class="loc-name"></h2>
+        <!-- Refreshes everything on Storm Results or UDOT Cameras; downloads under three minutes old are reused -->
+        <button type="button" id="global-refresh" class="refresh" title="Refresh" aria-label="Refresh">↻</button>
+        <span id="global-refresh-note" class="muted small" role="status"></span>
+      </div>
       <div class="loc-row">
         <h2 id="loc-name" class="loc-name">Loading…</h2>
         <!-- Reloads every tab's data for this location; downloads under three minutes old are reused -->
@@ -34,19 +62,11 @@
       <nav class="tabs" data-area-pages aria-label="Alta pages">
         <button type="button" class="tab active" data-view="forecast" aria-pressed="true">Forecast</button>
         <button type="button" class="tab" data-view="metrics" aria-pressed="false">Backcountry Ski Metrics</button>
-        <button type="button" class="tab" data-view="models" aria-pressed="false">Model Results</button>
+        <button type="button" class="tab" data-view="models" aria-pressed="false">Spaghettis</button>
         <button type="button" class="tab" data-view="stations" aria-pressed="false">Weather Stations</button>
       </nav>
     </div>
     <div class="top-right">
-      <!-- Drop-down menu holding the two "about this page" tabs; app.js closes it after a pick -->
-      <details id="info-menu" class="menu">
-        <summary class="tab" aria-label="Guide and info menu">Guide &amp; Info <span class="caret" aria-hidden="true">▾</span></summary>
-        <nav class="menu-list" aria-label="About this page">
-          <button type="button" class="tab" data-view="guide" aria-pressed="false">Quick Guide</button>
-          <button type="button" class="tab" data-view="info" aria-pressed="false">Detailed Info</button>
-        </nav>
-      </details>
       <p id="updated" class="muted small"></p>
     </div>
   </header>
@@ -115,22 +135,13 @@
     </section>
    </div>
 
-   <!-- Model Results tab: the charts that compare the individual models -->
+   <!-- Spaghettis tab: the charts that compare the individual models -->
    <div id="view-models" hidden>
     <!-- Time range for the two charts below; the same setting as the snow tiles on the Forecast tab -->
     <div class="range-bar js-range-bar" aria-label="Time range shown"></div>
 
-    <section class="card">
-      <h2>Snowfall by model</h2>
-      <div class="chart-wrap tall"><canvas id="chart-snow-models"></canvas></div>
-      <!-- Key to the line styles; keep in step with MODELS in app.js -->
-      <div class="line-key">
-        <span><svg viewBox="0 0 34 10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" stroke-width="3.5"/></svg>Average of the models</span>
-        <span><svg viewBox="0 0 34 10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" stroke-width="1.5"/></svg>GFS + HRRR</span>
-        <span><svg viewBox="0 0 34 10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" stroke-width="1.5" stroke-dasharray="6 3"/></svg>NBM (NWS blend)</span>
-        <span><svg viewBox="0 0 34 10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" stroke-width="1.5" stroke-dasharray="2 3"/></svg>NAM</span>
-      </div>
-    </section>
+    <!-- Snowfall by model: app.js adds one chart here for each forecast point except the ridge-top one -->
+    <div id="snow-model-charts"></div>
 
     <section class="card">
       <h2>Cloud cover by model</h2>
@@ -178,6 +189,24 @@
     </section>
    </div>
 
+   <!-- Storm Results (from the Locations menu): every resort's snow box, most storm snow first -->
+   <div id="view-storms" hidden>
+    <!-- One card per resort, each a link to that resort's forecast (renderStormResults in app.js) -->
+    <div id="storm-results"></div>
+   </div>
+
+   <!-- Mountain Forecasts (from the Locations menu): every resort's Snow Summary, most snow ahead first -->
+   <div id="view-mountains" hidden>
+    <div id="mountain-forecasts"></div>
+   </div>
+
+   <!-- UDOT Cameras (from the Locations menu): one tab per canyon, cameras from the top down -->
+   <div id="view-cameras" hidden>
+    <nav id="camera-tabs" class="tabs camera-tabs" aria-label="Canyon"></nav>
+    <div id="camera-grid" class="camera-grid"></div>
+    <p class="source">Images: <a href="https://cottonwoodcanyons.udot.utah.gov/road-information/">UDOT Cottonwood Canyons</a>, refreshed every minute while this page is open</p>
+   </div>
+
    <!-- Forecast tab: all the forecast tiles and charts -->
    <div id="view-forecast">
     <p id="status" class="status">Loading forecast…</p>
@@ -199,6 +228,7 @@
         <span><i class="box" style="background:#9fd8ff"></i>Light snow, 14 to 1 or more</span>
         <span><i class="box" style="background:#6cc3ff"></i>Average, 9 to 14 to 1</span>
         <span><i class="box" style="background:#3f8cff"></i>Heavy, under 9 to 1</span>
+        <span><i class="box" style="background:#5fd3a3"></i>Rain</span>
         <span><svg class="moon" viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 8.6A5 5 0 1 1 5.2 1a4 4 0 0 0 4.3 7.6z"/></svg>Fell at night</span>
       </div>
     </section>
@@ -387,14 +417,14 @@
     </section>
 
     <section class="card">
-      <h2>Model Results tab</h2>
+      <h2>Spaghettis tab</h2>
       <p>Shows how much the weather models agree. Lines close together mean a more certain forecast; lines that fan out mean a less certain one.</p>
 
       <h3>Snowfall by model</h3>
       <ul class="legend">
-        <li><span class="sym" data-fill="pointSwatches"></span><span>One colour per elevation, lowest first: <span data-fill="points">Base, <span data-fill="main">Mid-Collins</span>, Top of Collins, Mt Baldy</span></span></li>
-        <li><span class="sym"><svg class="ln" viewBox="0 0 34 10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" stroke="#c9d4e2" stroke-width="3.5"/></svg></span><span>Thick line: the average of the models</span></li>
-        <li><span class="sym"><svg class="ln" viewBox="0 0 34 10" aria-hidden="true"><line x1="0" y1="2" x2="34" y2="2" stroke="#c9d4e2" stroke-width="1.2"/><line x1="0" y1="5" x2="34" y2="5" stroke="#c9d4e2" stroke-width="1.2" stroke-dasharray="6 3"/><line x1="0" y1="8" x2="34" y2="8" stroke="#c9d4e2" stroke-width="1.2" stroke-dasharray="2 3"/></svg></span><span>Thin lines: the individual models</span></li>
+        <li><span class="sym">📈</span><span>One chart for each point on the mountain except the ridge top. Each shows the snow adding up from now.</span></li>
+        <li><span class="sym"><i class="sw" style="background:#ff8a5c"></i><i class="sw" style="background:#ffd166"></i><i class="sw" style="background:#6cc3ff"></i><i class="sw" style="background:#ff6fae"></i></span><span>One colour per model: GFS + HRRR, NBM, NAM, and ECMWF IFS in pink, which is shown for comparison but is not in the average</span></li>
+        <li><span class="sym"><svg class="ln" viewBox="0 0 34 10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" stroke="#ffffff" stroke-width="3.5"/></svg></span><span>Thick white line: the average of the models</span></li>
       </ul>
 
       <h3>Cloud cover by model</h3>
@@ -435,27 +465,29 @@
    <div id="view-info" class="info" hidden>
     <section class="card">
       <h2>Where the data comes from</h2>
-      <p>Everything is a model forecast for one point: <span data-fill="main">Mid-Collins</span> at <span data-fill="area">Alta</span>, <span data-fill="mainFt">9,662 ft</span>. The exceptions are the snowfall chart, which also shows three other points at <span data-fill="area">Alta</span>, and the temperature chart, which adds <span data-fill="low">Base</span> and <span data-fill="high">Top of Collins</span>. Alta and Solitude each have their own page, picked from the menu button with three lines in the top right corner; everything described here works the same way on both. Apart from the Weather Stations tab and the measured snow boxes at the top of the Forecast tab, nothing here is a measurement, including the "Now" tiles.</p>
+      <p>Everything is a model forecast for one point: <span data-fill="main">Mid-Collins</span> at <span data-fill="area">Alta</span>, <span data-fill="mainFt">9,662 ft</span>. The exceptions are the snowfall chart, which also shows three other points at <span data-fill="area">Alta</span>, and the temperature chart, which adds <span data-fill="low">Base</span> and <span data-fill="high">Top of Collins</span>. Each resort has its own page, picked from the menu button with three lines in the top right corner; everything described here works the same way on both. Apart from the Weather Stations tab and the measured snow boxes at the top of the Forecast tab, nothing here is a measurement, including the "Now" tiles.</p>
       <p><b>How often it updates.</b> Weather data is downloaded at most once every three minutes. If you reload the page, reopen it or switch resort within three minutes of the last download, the page reuses the copy your browser saved instead of asking the weather services again. "Updated" at the top right gives the time the forecast was actually downloaded.</p>
       <ul>
         <li><b>Main forecast:</b> the US GFS model from Open-Meteo, with the high-resolution HRRR model filling in the first one to two days. It runs 16 days ahead in hourly steps.</li>
+        <li><b>What is averaged and what is not:</b> snowfall, cloud cover, temperature and wind speed are the hour-by-hour average of the models that have data for that hour, so a single model running hot, cold or windy counts for less. For temperature and wind speed an hour needs at least two models; otherwise the GFS value is used, which only happens in the last day or so of the 16. NAM ends after about 2.5 days and NBM after about 11, so the mix of models behind the average changes with range. Gusts, wind direction, "feels like", rain amounts, the snow-to-water ratio, the snow level and everything "already fallen" still come from the GFS + HRRR alone, either because the other models are not downloaded for them or because they are worked out from several GFS values that have to agree with each other. If the wind average comes out above the GFS gust for an hour, the gust is raised to match it.</li>
         <li><b>Comparison models:</b> the NBM (the National Weather Service's blend of many models, about 11 days) and the NAM (about 2.5 days). The ECMWF AI model appears on the cloud chart only.</li>
         <li><b>National Weather Service:</b> the text forecast at the bottom of the Forecast tab.</li>
       </ul>
-      <p>The page has four tabs under the location name. <b>Forecast</b> holds the summary charts, daily forecast and tiles. <b>Backcountry Ski Metrics</b> is in development and empty for now. <b>Model Results</b> holds the two charts that compare the individual models, snowfall and cloud cover. <b>Weather Stations</b> holds measured readings.</p>
-      <p>The four snow tiles on the Forecast tab are buttons. Click one to make the time-based charts show only that period: 24 hours, 72 hours, 7 days or 16 days. The Model Results tab has the same choice as a row of buttons, and the two stay in step.</p>
+      <p>The page has four tabs under the location name. <b>Forecast</b> holds the summary charts, daily forecast and tiles. <b>Backcountry Ski Metrics</b> is in development and empty for now. <b>Spaghettis</b> holds the charts that compare the individual models, snowfall and cloud cover. <b>Weather Stations</b> holds measured readings.</p>
+      <p>The four snow tiles on the Forecast tab are buttons. Click one to make the time-based charts show only that period: 24 hours, 72 hours, 7 days or 16 days. The Spaghettis tab has the same choice as a row of buttons, and the two stay in step.</p>
       <p>Every chart with a time axis starts at midnight today, and on the 16-day view they all end on the same day, with their scales in a column of the same width on the right. That puts each day at the same place across the page on the Snow Summary, the Daily Forecast buttons, and the temperature, SWE, wind, ratio and model charts. Today's hours before now are dimmed, with a dashed "Now" line: they are the model's record of the day so far, not measurements. Snow totals and the snow tiles still count from now.</p>
     </section>
 
     <section class="card">
       <h2>Weather Stations</h2>
-      <p>The only measured data on the page. It shows the latest reading from each station that is reporting, temperature, wind, gust, and the direction the wind is coming from. Alta's stations are read live from the National Weather Service's public data feed. Solitude's stations are not on that feed, so a scheduled job collects them from the Synoptic Data service once an hour and saves them with the site; a Solitude reading can therefore be up to an hour or so old, and each station's history only builds up from the day the job started (ten days are kept). A reading more than three hours old is marked "old". The stations are listed by how many wind or snow measurements they sent in the last 24 hours, most first (a wind sensor stuck on zero all day counts for nothing). Ties go to the station with the most readings of any kind in the last 24 hours, which is the count in the last column, and then to the lower station. The top station is the one opened when the tab loads.</p>
+      <p><b>Storm Results</b>, at the top of the Locations menu (the button with three lines), shows every resort's measured snow box on one page, ordered from the most measured storm snow to the least. Each box works the same way as the one on that resort's Forecast tab. The one difference is how the storm's days are picked: Storm Results uses the GFS + HRRR model alone for that, so a storm's last day can occasionally differ by a day from the Snow Summary, which uses the model average.</p>
+      <p>The only measured data on the page. It shows the latest reading from each station that is reporting, temperature, wind, gust, and the direction the wind is coming from. Alta's and Deer Valley's stations are read live from the National Weather Service's public data feed. Solitude's stations are not on that feed, so a scheduled job collects them from the Synoptic Data service once an hour and saves them with the site; a Solitude reading can therefore be up to an hour or so old, and each station's history only builds up from the day the job started (ten days are kept). A reading more than three hours old is marked "old". The stations are listed by how many wind or snow measurements they sent in the last 24 hours, most first (a wind sensor stuck on zero all day counts for nothing). Ties go to the station with the most readings of any kind in the last 24 hours, which is the count in the last column, and then to the lower station. The top station is the one opened when the tab loads.</p>
       <p>Besides wind and temperature, a station gets a chart for each other thing it reports: humidity, dew point, wind chill, heat index, precipitation in the last hour, pressure, and visibility. These sit just above the station's readings table, and a chart only appears if the station has readings for it. The feed reports in metric units, converted here: millimetres ÷ 25.4 = inches, pascals ÷ 3,386.39 = inches of mercury, metres ÷ 1,609.34 = miles.</p>
       <p>When a station has four readings or fewer, its charts say very little, so its readings table is shown first and the charts follow it.</p>
       <p>If a station's wind sensor, or its thermometer, has read nothing but zero (or nothing at all) over the last 24 hours, it is probably iced up or broken. The charts for that measurement are moved below the station's readings table and given a red background, with a note at the top saying so. This is checked each time the page loads, so the charts go back to their usual place as soon as the sensor reports real values again.</p>
       <ul>
         <li><b>Stations:</b> <span data-fill="stationNames">Alta Base, Alta Guard House, Alta Collins, Top of Collins, Hidden Peak (Snowbird) and Mt Baldy</span>. Any that are not sending data are listed under the table and appear on their own once they report.</li>
-        <li><b>Model check:</b> the line under the table compares the wind a summit station measured over the last few days with the wind the model gave for the <span data-fill="ridge">Mt Baldy</span> point over the same hours. <span data-area="alta">It uses Mt Baldy's own station when it reports, otherwise Hidden Peak, a summit about a kilometre away.</span><span data-area="solitude">It uses the Honeycomb Peak station.</span> The "typical miss" is the average size of the hourly difference.</li>
+        <li><b>Model check:</b> the line under the table compares the wind a summit station measured over the last few days with the wind the model gave for the <span data-fill="ridge">Mt Baldy</span> point over the same hours. <span data-area="alta">It uses Mt Baldy's own station when it reports, otherwise Hidden Peak, a summit about a kilometre away.</span><span data-area="solitude">It uses the Honeycomb Peak station.</span><span data-area="deervalley">It uses the DV Empire Peak station when it reports wind, otherwise DV Mount Baldy.</span> The "typical miss" is the average size of the hourly difference.</li>
       </ul>
       <p>Click a station in the table to see its recent history below: an hour-by-hour wind bar chart (average speed, gusts and direction arrows), a wind rose, a temperature chart, and then every reading line by line, newest first. The temperature chart and the readings table cover the station's last 500 readings, which is about three and a half days for a station that reports every ten minutes and longer for one that reports less often.</p>
       <p><b>Wind bars.</b> One bar per hour. The blue part is the average of the wind speeds the station reported in that hour. The red part on top reaches up to the strongest gust reported in that hour. The arrow above a bar points the way the wind was blowing, using the hour's readings averaged with the stronger ones counting for more. The buttons above the chart set how far back it and the wind rose look: the last 6, 12, 24, 48 or 72 hours, counted from now.</p>
@@ -488,12 +520,12 @@
 
     <section class="card">
       <h2>Measured snow boxes</h2>
-      <p>The box with a blue left edge, beside Now, Wind and Clouds, holds measurements, not forecasts: the large blue numbers. <span data-area="alta">They come from Alta's Collins snow study plot at 9,662 ft, the same spot as the page's forecast point, through the Synoptic Data service. It reports in whole inches.</span><span data-area="solitude">They come from Solitude's Summit snow study plot at 9,641 ft, the same spot as the page's forecast point, through the Synoptic Data service. It reports in tenths of an inch.</span></p>
+      <p>The box with a blue left edge, beside Now, Wind and Clouds, holds measurements, not forecasts: the large blue numbers. <span data-area="alta">They come from Alta's Collins snow study plot at 9,662 ft, the same spot as the page's forecast point, through the Synoptic Data service. It reports in whole inches.</span><span data-area="solitude">They come from Solitude's Summit snow study plot at 9,641 ft, the same spot as the page's forecast point, through the Synoptic Data service. It reports in tenths of an inch.</span><span data-area="deervalley">They come from Deer Valley's Ontario station at 9,100 ft, the same spot as the page's forecast point, through the Synoptic Data service. It reports in tenths of an inch every five minutes, and the page keeps one reading an hour. Its precipitation gauge barely registers snow, so no SWE is shown for Deer Valley.</span></p>
       <ul>
-        <li><b>How new snow is counted:</b> the station has a board that measures the snow that has piled up since staff last cleared it. The page adds snow each time the board rises above its highest reading since it was cleared. A drop of more than 2" is taken to mean the board was cleared; smaller dips are treated as settling or sensor noise and ignored. Readings taken when it is above 40°F are skipped, because the board cannot be gaining snow then and a jump is a sensor glitch.</li>
+        <li><b>How new snow is counted:</b> the station has a board that measures the snow that has piled up since staff last cleared it. The page adds snow each time the board rises above its highest reading since it was cleared. A drop of more than 2" is taken to mean the board was cleared; smaller dips are treated as settling or sensor noise and ignored. Readings taken when it is above 40°F are skipped, because the board cannot be gaining snow then and a jump is a sensor glitch. So is a single reading that jumps more than 3" above the readings either side of it when those two agree, which catches the sudden one-off spikes some sensors give.</li>
         <li><b>Storm total:</b> the measured snow on the days of the most recent storm shown on the Snow Summary: the one under way, or otherwise the last one that ended. The storm's days come from the forecast and the model record, and the snow in them is measured. For a storm that has not finished, it is the total up to now.</li>
         <li><b>Last 12 hours, 24 hours and 7 days:</b> the measured snow in that time, counted back from now.</li>
-        <li><b>The small "SWE" number beside each (Alta only):</b> the snow water measured by the station's precipitation gauge over the same period. The gauge records the water that fell in each hour but cannot tell snow from rain, so the page only counts hours when it was 35°F or colder at the station. Gauges catch less than really falls when it is windy, so the true figure is often a little higher. Solitude's Summit station has no gauge, so no SWE is shown there.</li>
+        <li><b>The small "SWE" number beside each (Alta only):</b> the snow water measured by the station's precipitation gauge over the same period. The gauge records the water that fell in each hour but cannot tell snow from rain, so the page only counts hours when it was 35°F or colder at the station. Gauges catch less than really falls when it is windy, so the true figure is often a little higher. Solitude's Summit station has no gauge, and Deer Valley's Ontario gauge barely registers snow, so no SWE is shown at either.</li>
         <li><b>The small "model" number under each:</b> the model's own estimate of the snow that fell at the forecast point over the same period. It is the same record that draws the grey "already fallen" bars on the Snow Summary, added up over the storm's days so far or over the last 12 hours, 24 hours or 7 days. Comparing the two shows how well the model has been tracking what really fell.</li>
         <li><b>How fresh it is:</b> a scheduled job collects the station's readings once an hour and saves them to a file the page reads. The line under the boxes gives the time of the latest reading and warns if it is more than three hours old.</li>
         <li><b>Limits:</b> the station reports whole inches once an hour, so small amounts can be missed. It is one sheltered spot and does not speak for the base or the ridges. Readings from before the job started cannot be recovered, so for a storm that began earlier the line under the box says the record starts partway through the storm.</li>
@@ -517,7 +549,7 @@
 
     <section class="card">
       <h2>Snow tiles</h2>
-      <p>The "Next 24 h", "Next 72 h", "7-day" and "16-day" tiles show the snow and snow water added up over that period, using the average of the snowfall models at <span data-fill="main">Mid-Collins</span> (see the next chart). The "Now" and "Clouds" tiles use the average of the models for the current hour, the same way as the Daily Forecast: the weather type is worked out from the model-average snow and cloud cover and the GFS rain for this hour (heavy snow is 0.5" an hour or more, snow 0.15", light snow 0.03", rain 0.01" of water), and otherwise from the cloud cover. A single model can show a one-hour gap in the middle of a storm, which the average smooths over. The temperature and the "Wind" tile are the GFS model's current values.</p>
+      <p>The "Next 24 h", "Next 72 h", "7-day" and "16-day" tiles show the snow and snow water added up over that period, using the average of the snowfall models at <span data-fill="main">Mid-Collins</span> (see the next chart). The "Now" and "Clouds" tiles use the average of the models for the current hour, the same way as the Daily Forecast: the weather type is worked out from the model-average snow and cloud cover and the GFS rain for this hour (heavy snow is 0.5" an hour or more, snow 0.15", light snow 0.03", rain 0.01" of water), and otherwise from the cloud cover. A single model can show a one-hour gap in the middle of a storm, which the average smooths over. The temperature and the wind speed in the "Wind" tile are the average of the models (GFS + HRRR, NBM, NAM and ECMWF AI) for the current hour; the gust and direction are the GFS model's current values.</p>
     </section>
 
     <section class="card">
@@ -531,6 +563,7 @@
         <li><b>Storms under way:</b> for a storm that has started but not finished, the large number is only the snow still to come. The line under it gives how much has already fallen. Add the two for the storm's full total. The SWE chart works the same way.</li>
         <li><b>Green totals on the SWE chart:</b> a storm's water total is written in green, the same green as the rain bars, when more than half of that water is forecast (or recorded) as rain. Otherwise it is blue, or grey for a storm that has finished.</li>
         <li><b>The small darker blue number beside each storm total:</b> the storm's snow water (SWE) in inches, from the same models as the snow. It covers the same thing as the large number next to it: the whole storm, or for a storm under way only what is still to come. Under a very short bracket the word "SWE" is left off to save room.</li>
+        <li><b>Rain bars:</b> each day's rain, in inches of water, is stacked in green on top of that day's snow (a darker green for rain that has already fallen). The white number above a bar is still the day's snow only; when the day has rain, its amount is written in green just under that. The scale on the right is inches for both, so remember that an inch of rain is far more water than an inch of snow. Storms are still picked out by their snow, so a day with only rain does not start or extend a storm.</li>
         <li><b>The small green number after it:</b> the rain in that storm, in inches of water, shown only when the storm has any. It uses the same rain figures as the SWE chart, and like the other two numbers it covers only what is still to come for a storm under way. Snow water plus rain is the storm's total water.</li>
         <li><b>Storm totals:</b> a storm is a run of back-to-back days with at least 0.1" of snow each. One day with less than that ends the storm, so two bursts of snow separated by a dry day count as two storms. The total adds up everything in those bars, including the grey "already fallen" part if the storm has already started.</li>
       </ul>
@@ -551,24 +584,25 @@
         <li><b>Precip chance:</b> the chance of any precipitation in that hour, averaged over the models that publish one (GFS and NBM). The bar colour says what would fall, using the same model-average snow water and GFS rain as the SWE chart: pale blue for snow, green for rain, grey where there is a chance but no amount forecast.</li>
         <li><b>Snow density:</b> the snow-to-water ratio for each hour that has snow, in inches of snow per inch of water, so a taller bar is lighter snow. The colours are the same three bands as the Snow Summary. Hours with no snow have no bar.</li>
         <li><b>Cloud cover:</b> the model average from the Cloud cover by model chart. Each bar is bluer the clearer the sky and greyer the cloudier, over yellow day and dark night bands.</li>
-        <li><b>Temperature and Feels like:</b> the GFS values, with red bars above freezing, blue bars at or below, and a dashed line at 32°F. The bars rise from the bottom of the chart, not from zero. "Feels like" accounts for wind and humidity.</li>
-        <li><b>Wind &amp; gusts:</b> the GFS wind as a bar in the wind rose colours, with the gust rising above it in faint pink at the same width. The label above gives the wind with the gust in brackets, such as "17 (28)". Above that is the direction for that hour: the compass point the wind comes from, with a small arrow showing where it is blowing toward.</li>
+        <li><b>Temperature and Feels like:</b> the temperature is the average of the models (GFS + HRRR, NBM, NAM and ECMWF AI); "Feels like" is still the GFS model's own figure. Both are drawn with red bars above freezing, blue bars at or below, and a dashed line at 32°F. The bars rise from the bottom of the chart, not from zero. "Feels like" accounts for wind and humidity.</li>
+        <li><b>Wind &amp; gusts:</b> the model-average wind as a bar in the wind rose colours, with the gust rising above it in faint pink at the same width. The label above gives the wind with the gust in brackets, such as "17 (28)". Above that is the direction for that hour: the compass point the wind comes from, with a small arrow showing where it is blowing toward.</li>
       </ul>
       <p>Every measure is drawn as bars with the value written above each one. On a narrow screen only every second or third bar is labelled.</p>
     </section>
 
     <section class="card">
       <h2>Snowfall by model</h2>
-      <p>Running totals of snow from now at four points on the mountain, one colour each: <span data-fill="pointsFt">Base (8,560 ft), <span data-fill="main">Mid-Collins</span> (9,662 ft), Top of Collins (10,443 ft) and Mt Baldy (11,068 ft)</span>. For each point the thin lines are the individual models (GFS solid, NBM dashed, NAM dotted) and the thick line is their average. Where a colour's thin lines sit close together the models agree; where they fan out the forecast is uncertain. Click a location in the legend to hide or show it.</p>
+      <p>Running totals of snow from now, with one chart for each forecast point except the ridge-top one (<span data-fill="ridge">Mt Baldy</span>), lowest first. On each chart the thin coloured lines are the individual models (GFS + HRRR orange, NBM yellow, NAM blue) and the thick white line is their average. Where the thin lines sit close together the models agree; where they fan out the forecast is uncertain. Click a model in the legend above a chart to hide or show it.</p>
       <p>Each point is run through the same snow calculation with its own temperatures, so lower points get more rain and heavier snow. The models' grids are 2 to 3 km wide at best, so nearby points often share the same precipitation and differ mainly through temperature. The rest of the page uses <span data-fill="main">Mid-Collins</span> only.</p>
       <ul>
         <li><b>GFS + HRRR line:</b> the snow from the three steps above.</li>
         <li><b>NBM and NAM lines:</b> Open-Meteo reports their snowfall at a fixed 7 to 1 ratio, so the page converts it back to snow water and applies the same Kuchera ratio. That way the lines differ only in how much precipitation each model expects.</li>
+        <li><b>ECMWF IFS line (pink):</b> the European centre's main model at 9 km, drawn for comparison only. It is not in the average, so it does not change the white line, the snow boxes or the Snow Summary. Its snowfall is converted the same way as NAM's.</li>
       </ul>
       <p class="eq">other model's snow = (its snowfall ÷ 7) × Kuchera ratio</p>
       <ul>
         <li><b>Average:</b> for each hour, the mean of the models that still have a forecast, then added up. NAM ends after about 2.5 days and NBM after about 11, so beyond that the average is the GFS alone.</li>
-        <li><b>Labels on the thick lines:</b> where an average stays flat (changing less than 0.1") for a long stretch, the chart prints the location, the total so far and, in brackets, the matching snow water.</li>
+        <li><b>Labels on the thick lines:</b> where an average stays flat (changing less than 0.1") for a long stretch, the chart prints "Average", the total so far and, in brackets, the matching snow water.</li>
       </ul>
     </section>
 
@@ -580,13 +614,13 @@
 
     <section class="card">
       <h2>Temperature by model and Wind by model</h2>
-      <p>On the Model Results tab. Each thin line is one model's own forecast for <span data-fill="main">Mid-Collins</span>: the air temperature 2 metres above the ground, or the wind speed 10 metres above it. The models are told apart by line pattern, as on the cloud chart, and the thick line is the hour-by-hour average of the models that have data, drawn while at least two do. No calculation is applied beyond that average.</p>
+      <p>On the Spaghettis tab. Each thin line is one model's own forecast for <span data-fill="main">Mid-Collins</span>: the air temperature 2 metres above the ground, or the wind speed 10 metres above it. The models are told apart by line pattern, as on the cloud chart, and the thick line is the hour-by-hour average of the models that have data, drawn while at least two do. No calculation is applied beyond that average.</p>
       <ul>
         <li><b>Models:</b> GFS + HRRR, NBM, NAM and ECMWF AI. NAM ends after about 2.5 days and NBM after about 11.</li>
         <li><b>Temperature:</b> the average is red above freezing and blue at or below, with a thin line at 32°F.</li>
-        <li><b>Wind:</b> the models can differ a lot at one point in the mountains. The GFS + HRRR line, which the rest of the page uses for wind, often runs well above the others at <span data-fill="main">Mid-Collins</span>.</li>
+        <li><b>Wind:</b> the models can differ a lot at one point in the mountains. The GFS + HRRR line often runs well above the others at <span data-fill="main">Mid-Collins</span>.</li>
       </ul>
-      <p>These charts are for comparing the models. The Temperature and Wind charts on the Forecast tab still show the GFS + HRRR values, not this average.</p>
+      <p>These charts are for comparing the models. The thick average line for temperature and for wind speed is what the Forecast tab uses: its Temperature and Wind charts, the temperature and wind in the Daily Forecast, and the Now and Wind tiles.</p>
     </section>
 
     <section class="card">
@@ -634,12 +668,12 @@
 
     <section class="card">
       <h2>Temperature</h2>
-      <p>The GFS air temperature 2 metres above the ground at <span data-fill="tempPoints">Base, <span data-fill="main">Mid-Collins</span> and Top of Collins</span>, each adjusted by Open-Meteo to that point's elevation. Every line is red above freezing and blue at or below it, and the thin grey line marks 32°F. The locations are told apart by line style: <span data-fill="main">Mid-Collins</span> is thick and solid, <span data-fill="low">Base</span> is dashed and <span data-fill="high">Top of Collins</span> is dotted.</p>
+      <p>The model-average air temperature 2 metres above the ground at <span data-fill="tempPoints">Base, <span data-fill="main">Mid-Collins</span> and Top of Collins</span>, each adjusted by Open-Meteo to that point's elevation. Every line is red above freezing and blue at or below it, and the thin grey line marks 32°F. The locations are told apart by line style: <span data-fill="main">Mid-Collins</span> is thick and solid, <span data-fill="low">Base</span> is dashed and <span data-fill="high">Top of Collins</span> is dotted.</p>
     </section>
 
     <section class="card">
       <h2>Wind</h2>
-      <p>The GFS wind speed and gusts 10 metres above the ground. The compass letters above the gust line show where the wind comes from, so "SW" is a south-west wind. They are spaced so they don't overlap: every few hours on the short views and about every 12 hours on the 16-day view. Hovering shows the direction for any hour. No calculation is applied.</p>
+      <p>The model-average wind speed 10 metres above the ground, with the GFS model's gusts. The compass letters above the gust line show where the wind comes from, so "SW" is a south-west wind. They are spaced so they don't overlap: every few hours on the short views and about every 12 hours on the 16-day view. Hovering shows the direction for any hour. No calculation is applied.</p>
     </section>
 
     <section class="card">

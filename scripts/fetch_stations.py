@@ -32,6 +32,13 @@ DATA = pathlib.Path(__file__).resolve().parent.parent / "data"
 SNOW_FILES = {
     "CLN": "alta-collins.json",        # Alta - Collins, 9,662 ft
     "SOLSM": "solitude-summit.json",   # Solitude - Summit, 9,641 ft
+    "DVO": "deer-valley-ontario.json", # Deer Valley - Ontario, 9,100 ft
+}
+# Stations that report every few minutes. Their snow file keeps one row per hour instead: the
+# last reading of each complete hour, labelled with the time the hour ended, and that hour's
+# water added up from the station's few-minute amounts (Synoptic variable named here) as precip_1h.
+FEW_MINUTE_PRECIP = {
+    "DVO": "precip_accum_five_minute",
 }
 # Column name in a snow file -> Synoptic variable name
 SNOW_COLUMNS = {
@@ -101,6 +108,26 @@ def readings(station, columns):
             for i, when in enumerate(obs["date_time"])}
 
 
+def by_hour(station, rows, precip_var):
+    """Thin few-minute readings to one row per complete hour (see FEW_MINUTE_PRECIP)."""
+    obs = station["OBSERVATIONS"]
+    amounts = obs.get(f"{precip_var}_set_1") or [None] * len(obs["date_time"])
+    def hour_end(when):
+        t = datetime.datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ")
+        floor = t.replace(minute=0, second=0)
+        return (floor if t == floor else floor + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    hours = {}
+    for i, when in enumerate(obs["date_time"]):
+        h = hours.setdefault(hour_end(when), {"last": None, "water": 0.0, "any": False})
+        h["last"] = rows[when]  # readings arrive oldest first, so this ends as the hour's last one
+        if amounts[i] is not None:
+            h["water"] += amounts[i]
+            h["any"] = True
+    latest = max(obs["date_time"])
+    return {end: {**h["last"], "precip_1h": round(h["water"], 3) if h["any"] else None}
+            for end, h in hours.items() if end <= latest}  # the hour under way is left for the next run
+
+
 def merged(old_rows, old_columns, new, names):
     """Old rows with the new readings laid over them, so a re-run replaces instead of duplicating."""
     rows = {row[0]: dict(zip(old_columns[1:], row[1:])) for row in old_rows}
@@ -124,7 +151,8 @@ def write(path, content):
 
 def main():
     wanted = list(dict.fromkeys(list(SNOW_FILES) + [s for ids in STATION_FILES.values() for s in ids]))
-    variables = list(dict.fromkeys(list(SNOW_COLUMNS.values()) + list(STATION_COLUMNS.values())))
+    variables = list(dict.fromkeys(list(SNOW_COLUMNS.values()) + list(STATION_COLUMNS.values()) +
+                                   list(FEW_MINUTE_PRECIP.values())))
     found = fetch(read_token(), wanted, variables)
     now = datetime.datetime.now(datetime.timezone.utc)
     stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -135,7 +163,10 @@ def main():
             continue
         path, names = DATA / filename, list(SNOW_COLUMNS)
         old = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"rows": [], "columns": ["time"]}
-        rows, added = merged(old["rows"], old["columns"], readings(found[stid], SNOW_COLUMNS), names)
+        new = readings(found[stid], SNOW_COLUMNS)
+        if stid in FEW_MINUTE_PRECIP:
+            new = by_hour(found[stid], new, FEW_MINUTE_PRECIP[stid])
+        rows, added = merged(old["rows"], old["columns"], new, names)
         write(path, {
             "station": describe(found[stid]),
             "updated": stamp,

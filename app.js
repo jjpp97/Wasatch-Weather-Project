@@ -36,6 +36,10 @@ const MODELS = [
   { id: "ncep_nbm_conus", name: "NBM (NWS blend)", color: "#ffd166", dash: [6, 3] },
   { id: "ncep_nam_conus", name: "NAM (US)", color: "#6cc3ff", dash: [2, 3] },
   { id: "ecmwf_aifs025_single", name: "ECMWF AI", color: "#b388ff", dash: [8, 3, 2, 3], cloudOnly: true }, // not on the snowfall chart or in its average
+  // ECMWF's main model at 9 km. Drawn on the snowfall charts for comparison only: it is in no
+  // average and on no other chart (snowOnly, notInAverage). Its snowfall is reported at 7 to 1,
+  // like NAM's, so it goes through the same conversion as the other models.
+  { id: "ecmwf_ifs", name: "ECMWF IFS (not in average)", color: "#ff6fae", dash: [], snowOnly: true, notInAverage: true },
 ];
 
 // The resorts along the top of the page. Each one has its own forecast points (the entries in
@@ -80,6 +84,27 @@ const AREAS = {
       { id: "SOLSM", name: "Solitude Summit", elevation_ft: 9641, lat: 40.60081, lon: -111.60364 },
       { id: "SOL", name: "Powderhorn", elevation_ft: 9888, lat: 40.6083, lon: -111.6044 },
       { id: "SOLHP", name: "Honeycomb Peak", elevation_ft: 10488, lat: 40.60167, lon: -111.61417 },
+    ],
+  },
+  deervalley: {
+    name: "Deer Valley",
+    // Ontario's precipitation gauge reads almost nothing while snow piles up on its board (it
+    // looks like a rain gauge that cannot catch snow), so no SWE is worked out from it (swe: false)
+    snow: { file: "data/deer-valley-ontario.json", name: "DV Ontario station", tenths: true, swe: false },
+    tempExtra: { "deer-valley-base": [7, 4], "deer-valley-empire-peak": [2, 3] },
+    ridgePoint: "deer-valley-empire-peak",
+    ridgeStations: ["EMPUT", "MBY"],
+    // All on the National Weather Service's public feed, read live like Alta's
+    stationFeed: "nws",
+    stations: [
+      { id: "DVE", name: "DV Burns", elevation_ft: 7333, lat: 40.634029, lon: -111.479465 },
+      { id: "UTONM", name: "SR-224 Ontario Mine (road)", elevation_ft: 7723, lat: 40.6253, lon: -111.4968 },
+      { id: "SNV", name: "DV Ruby", elevation_ft: 8300, lat: 40.6152, lon: -111.5110 },
+      { id: "DVB", name: "DV Bald Eagle", elevation_ft: 8400, lat: 40.6236, lon: -111.4809 },
+      { id: "DVP", name: "DV Park Peak", elevation_ft: 8868, lat: 40.59296, lon: -111.49270 },
+      { id: "DVO", name: "DV Ontario", elevation_ft: 9100, lat: 40.609141, lon: -111.497424 },
+      { id: "MBY", name: "DV Mount Baldy", elevation_ft: 9347, lat: 40.6089, lon: -111.4802 },
+      { id: "EMPUT", name: "DV Empire Peak", elevation_ft: 9570, lat: 40.6119, lon: -111.5272 },
     ],
   },
 };
@@ -169,6 +194,7 @@ async function main() {
 
     const all = await getForecast(locations);
     locRows = all.map(processForecast);
+    applyModelAverages(); // does nothing yet if the other models have not arrived
     const data = all[0];
     const fc = locRows[0];
     allRows = fc;
@@ -197,7 +223,10 @@ function showArea() {
   nav.innerHTML = Object.entries(AREAS).map(([key, a]) =>
     `<a class="tab${key === AREA_KEY ? " active" : ""}" href="?area=${key}"${key === AREA_KEY ? ' aria-current="page"' : ""}>${a.name}</a>`).join("");
   // Switching resort keeps you on the tab you were looking at
-  nav.onclick = e => { const a = e.target.closest("a"); if (a) a.href = a.getAttribute("href").split("#")[0] + location.hash; };
+  nav.onclick = e => {
+    const a = e.target.closest("a");
+    if (a) a.href = a.getAttribute("href").split("#")[0] + (["#storms", "#mountains", "#cameras"].includes(location.hash) ? "" : location.hash);
+  };
   document.querySelector(".tabs[data-area-pages]").setAttribute("aria-label", `${AREA.name} pages`);
 
   const ft = l => `${l.elevation_ft.toLocaleString()} ft`;
@@ -240,7 +269,7 @@ const pointParams = locs => ({
 
 // ---------- Data fetching (the only part that changes later) ----------
 // Returns one forecast per location, in the same order
-async function getForecast(locs) {
+async function getForecast(locs, quiet = false) {
   const build = (hourly) => {
     const p = new URLSearchParams({
       ...pointParams(locs),
@@ -263,25 +292,30 @@ async function getForecast(locs) {
     url = build(HOURLY_VARS_MIN);
     data = await apiJson(url, { cache: "no-store" });
   }
-  // The time the forecast was downloaded, which can be up to three minutes before the page opened
+  if (!quiet) noteDownload(url); // only the page's own forecast sets the "Updated" time
+  return [].concat(data); // a single location comes back as one object, several as a list
+}
+// Shows when the page's forecast (at `url`) was downloaded, which can be up to three minutes
+// before the page opened
+function noteDownload(url) {
   document.getElementById("updated").textContent =
     "Updated " + new Date(apiFetchedAt.get(new URL(url).href) ?? Date.now()).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-  return [].concat(data); // a single location comes back as one object, several as a list
 }
 
 // Snowfall and cloud cover from every model in MODELS at every location, for the comparison charts
+const modelsUrl = locs => "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({
+  ...pointParams(locs),
+  hourly: "snowfall,cloud_cover,precipitation_probability,temperature_2m,wind_speed_10m",
+  models: MODELS.map(m => m.id).join(","),
+  forecast_days: 16,
+  precipitation_unit: "inch",
+  temperature_unit: "fahrenheit",
+  wind_speed_unit: "mph",
+});
 async function loadModels(locs) {
   try {
-    const p = new URLSearchParams({
-      ...pointParams(locs),
-      hourly: "snowfall,cloud_cover,precipitation_probability,temperature_2m,wind_speed_10m",
-      models: MODELS.map(m => m.id).join(","),
-      forecast_days: 16,
-      precipitation_unit: "inch",
-      temperature_unit: "fahrenheit",
-      wind_speed_unit: "mph",
-    });
-    modelData = [].concat(await apiJson("https://api.open-meteo.com/v1/forecast?" + p, { cache: "no-store" }));
+    modelData = [].concat(await apiJson(modelsUrl(locs), { cache: "no-store" }));
+    applyModelAverages();
     if (allRows.length) {
       renderNow(allRows, currentObs); // snow tiles switch to the model average
       renderSummary();
@@ -292,6 +326,31 @@ async function loadModels(locs) {
   } catch (err) {
     console.warn("Model comparison unavailable, showing GFS only", err);
   }
+}
+
+// Temperature and wind speed on the Forecast tab are the average of the models, the same line
+// as "Average of the models" on the Spaghettis tab. Each hour's `temp` and `wind` are
+// replaced by that average once both the forecast and the other models have loaded; the GFS's
+// own values are kept as `tempGfs` and `windGfs`. An hour that fewer than two models cover
+// keeps the GFS value. Everything worked out from temperature inside processForecast (the
+// snow-to-water ratio, rain or snow) has already been done with the GFS by then and is not
+// touched, and gusts, direction and feels-like stay as the GFS gave them.
+function applyModelAverages() {
+  if (!modelData || !locRows.length) return;
+  locRows.forEach((rows, li) => {
+    if (!modelData[li]) return;
+    const full = [...(rows.earlier || []), ...rows];
+    full.forEach(r => { if (r.tempGfs === undefined) { r.tempGfs = r.temp; r.windGfs = r.wind; r.gustGfs = r.gust; } });
+    const series = modelSeries(full, li);
+    const temp = averageAcross(series, "temp"), wind = averageAcross(series, "wind");
+    full.forEach((r, i) => {
+      r.temp = temp[i] ?? r.tempGfs;
+      r.wind = wind[i] ?? r.windGfs;
+      // A gust is never less than the wind it is a gust of
+      r.gust = r.gustGfs == null || r.wind == null ? r.gustGfs : Math.max(r.gustGfs, r.wind);
+      r.averaged = temp[i] != null || wind[i] != null;
+    });
+  });
 }
 
 // ---------- Snow math ----------
@@ -432,10 +491,11 @@ function renderNow(rows, current) {
   const cloudNow = (series.length > 1 ? averageAcross(series, "cloud")[0] : null) ?? rows[0].cloud;
   const [symbol, words] = hourWeather({ snow: avg.snow[0] ?? 0, rain: rows[0].rain ?? 0, cloud: cloudNow, isDay: rows[0].isDay });
   const tiles = [
-    { label: "Now", value: `${r0(cur.temperature_2m ?? rows[0].temp)}°F`, sub: words,
+    // Once the models have loaded, the temperature and wind are their average for the current hour
+    { label: "Now", value: `${r0(rows[0].averaged ? rows[0].temp : cur.temperature_2m ?? rows[0].temp)}°F`, sub: words,
       icon: symbol ? `<span class="wx-icon" aria-hidden="true">${symbol}</span>` : "", cls: "now" },
     // The direction the wind comes from sits beside the speed; gusts go underneath
-    { label: "Wind", value: `${r0(cur.wind_speed_10m ?? rows[0].wind)} mph <span class="wind-dir">${compass(cur.wind_direction_10m ?? rows[0].dir)}</span>`,
+    { label: "Wind", value: `${r0(rows[0].averaged ? rows[0].wind : cur.wind_speed_10m ?? rows[0].wind)} mph <span class="wind-dir">${compass(cur.wind_direction_10m ?? rows[0].dir)}</span>`,
       sub: `Gusts ${r0(cur.wind_gusts_10m ?? rows[0].gust)} mph`, cls: "wind" },
     { label: "Clouds", value: `${r0(cloudNow)}%`,
       sub: cloudNow == null ? "" : cloudNow < 25 ? "Clear" : cloudNow <= 50 ? "Partly cloudy" : cloudNow < 90 ? "Mostly cloudy" : "Overcast" },
@@ -506,7 +566,13 @@ let measured = null;  // { name, elevation_ft, newSnow: [{ t, inches }], latest 
 let snowStorms = [];  // the Snow Summary's storms as { from, to } day keys, set when it is drawn
 
 async function loadMeasured() {
-  const file = await apiJson(AREA.snow.file, { cache: "no-store" });
+  measured = parseMeasured(await apiJson(AREA.snow.file, { cache: "no-store" }), AREA.snow);
+  refreshMeasuredTiles();
+}
+
+// A study plot's data file turned into its measured new snow (and snow water, where the station
+// has a gauge that can be trusted). `snow` is the area's AREAS[...].snow settings.
+function parseMeasured(file, snow) {
   const col = name => file.columns.indexOf(name);
   const all = file.rows.map(r => ({ t: Date.parse(r[col("time")]), board: r[col("snow_interval")], temp: r[col("air_temp")],
     precip: col("precip_1h") < 0 ? null : r[col("precip_1h")] })).filter(r => !Number.isNaN(r.t));
@@ -517,7 +583,7 @@ async function loadMeasured() {
   // gauge cannot tell snow from rain. Null for a station with no gauge.
   const SNOW_MAX_F = 35;
   const gauge = all.filter(r => r.precip != null);
-  const water = gauge.length
+  const water = gauge.length && snow.swe !== false
     ? gauge.filter(r => r.precip > 0 && (r.temp == null || r.temp <= SNOW_MAX_F)).map(r => ({ t: r.t, inches: r.precip }))
     : null;
 
@@ -527,9 +593,16 @@ async function loadMeasured() {
   // Readings taken above TOO_WARM_F are skipped altogether: the board cannot be gaining snow then,
   // so a jump is a sensor glitch (one read 9" for a single hour at 55°F).
   const TOO_WARM_F = 40;
+  // A one-reading spike is a sensor glitch too: a reading more than 3" above the readings on
+  // both sides of it, when those two agree to within 1". (A board cleared straight after a big
+  // hour drops far below the reading before, so real snow is not thrown away.)
+  const steady = readings.filter((r, i) => {
+    const a = readings[i - 1], b = readings[i + 1];
+    return !(a && b && r.board - a.board > 3 && r.board - b.board > 3 && Math.abs(b.board - a.board) <= 1);
+  });
   const newSnow = [];
   let peak = null;
-  for (const r of readings) {
+  for (const r of steady) {
     if (r.temp != null && r.temp > TOO_WARM_F) continue;
     if (peak == null || r.board < peak - 2) {
       if (peak != null && r.board > 0) newSnow.push({ t: r.t, inches: r.board }); // already some on the cleared board
@@ -539,15 +612,15 @@ async function loadMeasured() {
       peak = r.board;
     }
   }
-  measured = {
-    name: AREA.snow.name,
+  return {
+    name: snow.name,
+    tenths: snow.tenths,
     elevation_ft: file.station.elevation_ft,
     newSnow,
     water,
     first: readings.length ? readings[0].t : null,
     latest: readings.length ? readings[readings.length - 1].t : null,
   };
-  refreshMeasuredTiles();
 }
 
 // The snow box beside Now, Wind and Clouds, as wide as those three together. Four periods side
@@ -560,13 +633,25 @@ function refreshMeasuredTiles() {
   if (!box || !note) return;
   if (!measured || measured.latest == null) { box.innerHTML = ""; note.textContent = ""; return; }
 
-  const now = Date.now();
-  const dayOf = hourKeyIn(locations[0].timezone); // "YYYY-MM-DDTHH:00" for a moment in time
-  const add = (list, keep) => list.reduce((a, s) => a + (keep(s.t) ? s.inches : 0), 0);
-  const total = keep => add(measured.newSnow, keep);
-  const swe = keep => (measured.water ? add(measured.water, keep) : null); // null: the station has no gauge
+  // The newest storm on the Snow Summary that has started: one under way, or else the last one
+  const today = hourKeyIn(locations[0].timezone)(Date.now()).slice(0, 10);
+  const storm = [...snowStorms].reverse().find(s => s.from <= today);
   // The model's record of snow already fallen: every hour before the one under way
   const past = allRows.length ? snowHistory.filter(r => r.time < allRows[0].time) : [];
+  const { cols, partial } = snowBoxCols(measured, storm, past, locations[0].timezone);
+  box.innerHTML = snowBoxHtml(cols, measured, locations[0].name);
+  note.textContent = measuredNote(measured, partial);
+}
+
+// The four columns of a snow box: { label, measured, swe, model } for the storm (`storm` is
+// { from, to } day keys, or null) and the last 12 hours, 24 hours and 7 days. `past` is the
+// model's hourly record before the hour under way; `tz` the forecast point's timezone.
+function snowBoxCols(m, storm, past, tz) {
+  const now = Date.now();
+  const dayOf = hourKeyIn(tz); // "YYYY-MM-DDTHH:00" for a moment in time
+  const add = (list, keep) => list.reduce((a, s) => a + (keep(s.t) ? s.inches : 0), 0);
+  const total = keep => add(m.newSnow, keep);
+  const swe = keep => (m.water ? add(m.water, keep) : null); // null: the station has no usable gauge
   const model = keep => (past.length ? past.reduce((a, r) => a + (keep(r.time) ? r.snow || 0 : 0), 0) : null);
   const lastHours = (label, h) => {
     const since = dayOf(now - h * 3600000);
@@ -575,25 +660,27 @@ function refreshMeasuredTiles() {
   };
   const cols = [];
   let partial = false;
-
-  // The newest storm on the Snow Summary that has started: one under way, or else the last one
-  const today = dayOf(now).slice(0, 10);
-  const storm = [...snowStorms].reverse().find(s => s.from <= today);
   if (storm) {
     const md = k => `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}`;
     const dates = storm.from === storm.to ? md(storm.from) : `${md(storm.from)}–${md(storm.to)}`;
     const inDays = day => day >= storm.from && day <= storm.to;
-    partial = dayOf(measured.first).slice(0, 10) > storm.from; // the measured record starts after the storm did
+    partial = m.first != null && dayOf(m.first).slice(0, 10) > storm.from; // the measured record starts after the storm did
     const inStorm = t => inDays(dayOf(t).slice(0, 10));
-    cols.push({ label: `Storm ${dates}`, measured: total(inStorm), swe: swe(inStorm),
+    cols.push({ label: `Storm ${dates}`, isStorm: true, measured: total(inStorm), swe: swe(inStorm),
       model: model(time => inDays(time.slice(0, 10))) });
   }
   cols.push(lastHours("Last 12 h", 12), lastHours("Last 24 h", 24), lastHours("Last 7 days", 168));
+  return { cols, partial };
+}
 
-  const inches = v => `${AREA.snow.tenths ? r1(v) : r0(v)}"`;
-  box.innerHTML = `
+// The snow box itself, measured snow large with SWE beside it and the model's estimate below.
+// `head` is optional HTML for a line across the top of the box (Storm Results uses it).
+function snowBoxHtml(cols, m, pointName, head = "") {
+  const inches = v => `${m.tenths ? r1(v) : r0(v)}"`;
+  return `
     <div class="tile snow-box" style="--cols: ${cols.length}"
-         title="Top: snow${measured.water ? " and snow water (SWE)" : ""} measured at the ${measured.name}, ${measured.elevation_ft.toLocaleString()} ft. Below: the model's snow estimate for ${locations[0].name}.">
+         title="Top: snow${m.water ? " and snow water (SWE)" : ""} measured at the ${m.name}, ${m.elevation_ft.toLocaleString()} ft. Below: the model's snow estimate for ${pointName}.">
+      ${head ? `<div class="snow-head">${head}</div>` : ""}
       ${cols.map(c => `<div class="snow-col">
         <div class="label">${c.label}</div>
         <div class="snow-line">
@@ -603,13 +690,221 @@ function refreshMeasuredTiles() {
         <div class="model"><span class="model-word">model</span> ${c.model == null ? "–" : `${r1(c.model)}"`}</div>
       </div>`).join("")}
     </div>`;
+}
 
-  const when = new Date(measured.latest).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-  const hoursOld = (now - measured.latest) / 3600000;
-  note.textContent = `Measured at the ${measured.name}, latest ${when}` +
+// The line under a snow box: where the snow was measured and how fresh the reading is
+function measuredNote(m, partial) {
+  const when = new Date(m.latest).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const hoursOld = (Date.now() - m.latest) / 3600000;
+  return `Measured at the ${m.name}, latest ${when}` +
     (hoursOld > 3 ? ` (${r0(hoursOld)} hours old)` : "") +
     (partial ? "; its record starts partway through the storm" : "") +
     `. Small numbers: model estimate.`;
+}
+
+// ---------- Storm Results (in the Locations menu) ----------
+// Every resort's snow box on one page, the resort with the most measured storm snow first.
+// Each resort needs only its study plot's file and one download of the GFS model's record and
+// forecast for its main forecast point, which also picks out the storm: the run of days with at
+// least 0.05" of model snow that is under way, or else the last one (the Snow Summary's rule,
+// but from the GFS alone rather than the model average, so a storm's last day can differ by one).
+let stormResultsShown = false;
+let stormUrls = []; // the downloads behind Storm Results, for its refresh button
+async function renderStormResults() {
+  const holder = document.getElementById("storm-results");
+  if (!holder || stormResultsShown) return;
+  stormResultsShown = true;
+  holder.innerHTML = '<p class="muted">Loading every resort…</p>';
+  const when = ms => new Date(ms).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const allLocs = await fetch("locations.json").then(r => r.json());
+  stormUrls = [];
+  const day = offset => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+  const results = await Promise.all(Object.entries(AREAS).map(async ([key, area]) => {
+    const loc = allLocs.find(l => l.area === area.name);
+    try {
+      const p = new URLSearchParams({
+        ...pointParams([loc]), hourly: HISTORY_VARS.join(","), models: "ncep_gfs_seamless",
+        start_date: day(-14), end_date: day(15),
+        temperature_unit: "fahrenheit", wind_speed_unit: "mph", precipitation_unit: "inch",
+      });
+      const histUrl = "https://historical-forecast-api.open-meteo.com/v1/forecast?" + p;
+      stormUrls.push(new URL(area.snow.file, location.href).href, new URL(histUrl).href);
+      const [file, hist] = await Promise.all([apiJson(area.snow.file, { cache: "no-store" }),
+        apiJson(histUrl, { cache: "no-store" })]);
+      const m = parseMeasured(file, area.snow);
+      const rows = hourRows(hist.hourly);
+      const nowKey = hourKeyIn(loc.timezone)(Date.now());
+      const daily = new Map();
+      rows.forEach(r => daily.set(r.time.slice(0, 10), (daily.get(r.time.slice(0, 10)) || 0) + (r.snow || 0)));
+      const storm = latestStorm(daily, nowKey.slice(0, 10));
+      const { cols, partial } = snowBoxCols(m, storm, rows.filter(r => r.time < nowKey), loc.timezone);
+      return { key, area, loc, m, cols, partial, stormSnow: cols.find(c => c.isStorm)?.measured ?? 0 };
+    } catch (err) {
+      console.warn(`Storm results unavailable for ${area.name}`, err);
+      return { key, area, failed: true, stormSnow: -1 };
+    }
+  }));
+  results.sort((a, b) => b.stormSnow - a.stormSnow);
+  // Each resort is its own card and the whole card links to that resort's forecast. The station
+  // and the time of its latest reading sit at the right of the resort's name.
+  holder.innerHTML = results.map(r => {
+    const ok = !r.failed && r.m.latest != null;
+    const hoursOld = ok ? (Date.now() - r.m.latest) / 3600000 : 0;
+    const source = ok ? `${r.m.name.replace(/ station$/, "")} · updated ${when(r.m.latest)}` +
+      (hoursOld > 3 ? ` (${r0(hoursOld)} h old)` : "") + (r.partial ? " · partial storm record" : "") : "";
+    // The resort's name and the station sit inside the snow box, along its top
+    const head = `<h3>${r.area.name}</h3><span class="muted small">${source}</span>`;
+    return `<a class="storm-card" href="?area=${r.key}" aria-label="${r.area.name} forecast">
+      ${ok ? snowBoxHtml(r.cols, r.m, r.loc.name, head)
+        : `<div class="tile snow-box"><div class="snow-head">${head}</div><p class="muted small">No data right now.</p></div>`}
+    </a>`;
+  }).join("");
+}
+
+// ---------- UDOT Cameras (in the Locations menu) ----------
+// UDOT's road cameras in and below the Cottonwood canyons, from its Cottonwood Canyons page. Each
+// `view` is a camera view number: the picture is at udottraffic.utah.gov/map/Cctv/<view>, a plain
+// image UDOT updates about once a minute, with no key needed. Listed from the top of each canyon
+// down. If UDOT replaces a camera its picture stops loading and its number needs updating here.
+const CAMERA_GROUPS = [
+  { key: "lcc", name: "Little Cottonwood", cams: [
+    { view: 165271, name: "Alta", where: "SR-210 · mile 12.16" },
+    { view: 165175, name: "Alta Bypass", where: "SR-210 · mile 10.95" },
+    { view: 165174, name: "Upper White Pine", where: "SR-210 · mile 9.7" },
+    { view: 165998, name: "White Pine parking", where: "SR-210 · mile 9.2" },
+    { view: 166033, name: "Seven Turns", where: "SR-210 · mile 7.4" },
+    { view: 164767, name: "Upper Vault", where: "SR-210 · mile 5.96" },
+    { view: 164559, name: "Canyon mouth", where: "SR-210 at SR-209" },
+  ] },
+  { key: "bcc", name: "Big Cottonwood", cams: [
+    { view: 165825, name: "Brighton", where: "SR-190 · mile 16.07" },
+    { view: 165123, name: "Solitude", where: "SR-190 · mile 14.53" },
+    { view: 164818, name: "Silver Fork", where: "SR-190 · mile 12.54" },
+    { view: 165945, name: "Cardiff Fork", where: "SR-190 · mile 10.74" },
+    { view: 164788, name: "S-Curves", where: "SR-190 · mile 6.38" },
+    { view: 164416, name: "Dogwood", where: "SR-190 · mile 4.1" },
+    { view: 164333, name: "Canyon mouth", where: "Wasatch Blvd at Fort Union Blvd" },
+  ] },
+  { key: "below", name: "Below the Canyons", cams: [
+    { view: 165939, name: "9800 S at Wasatch Blvd", where: "SR-209 · 3400 E" },
+    { view: 164567, name: "Old Wasatch Blvd", where: "SR-209 at 9710 S" },
+    { view: 164812, name: "9400 S at 2300 E", where: "SR-209 · Quail Hollow Dr" },
+  ] },
+];
+// The canyon tab that opens first: the one the resort being viewed is up
+let cameraGroup = AREA_KEY === "solitude" ? "bcc" : "lcc";
+let cameraTimer = null;
+
+// Shows or hides the cameras. While shown, the pictures reload every minute.
+function showCameras(on) {
+  clearInterval(cameraTimer);
+  cameraTimer = null;
+  if (!on) return;
+  drawCameras();
+  cameraTimer = setInterval(() => {
+    if (document.hidden) return; // nothing to refresh while the page is out of sight
+    const stamp = Date.now();
+    document.querySelectorAll("#camera-grid img").forEach(img => { img.src = img.dataset.src + "?t=" + stamp; });
+  }, 60000);
+}
+
+function drawCameras() {
+  const tabs = document.getElementById("camera-tabs");
+  tabs.innerHTML = CAMERA_GROUPS.map(g => `<button type="button" class="tab${g.key === cameraGroup ? " active" : ""}"
+    data-group="${g.key}" aria-pressed="${g.key === cameraGroup}">${g.name}</button>`).join("");
+  tabs.onclick = e => {
+    const btn = e.target.closest("[data-group]");
+    if (!btn) return;
+    cameraGroup = btn.dataset.group;
+    drawCameras();
+  };
+  const group = CAMERA_GROUPS.find(g => g.key === cameraGroup);
+  const stamp = Date.now();
+  document.getElementById("camera-grid").innerHTML = group.cams.map(c => {
+    const src = `https://www.udottraffic.utah.gov/map/Cctv/${c.view}`;
+    return `<figure class="camera">
+      <a href="${src}" target="_blank" rel="noopener"><img src="${src}?t=${stamp}" data-src="${src}" alt="UDOT camera: ${c.name}" loading="lazy"></a>
+      <figcaption>${c.name}<span class="muted">${c.where}</span></figcaption>
+    </figure>`;
+  }).join("");
+}
+
+// ---------- Mountain Forecasts (in the Locations menu) ----------
+// Every resort's Snow Summary on one page, the resort with the most forecast snow over the next
+// 16 days first. Each needs its own GFS forecast, model comparison and model record for its main
+// forecast point: the same three downloads its own page makes, for that one point.
+let mountainsShown = false;
+let mountainUrls = []; // the downloads behind it, for the refresh button
+async function renderMountainForecasts() {
+  const holder = document.getElementById("mountain-forecasts");
+  if (!holder || mountainsShown) return;
+  mountainsShown = true;
+  holder.innerHTML = '<p class="muted">Loading every resort…</p>';
+  const allLocs = await fetch("locations.json").then(r => r.json());
+  mountainUrls = [];
+  const results = await Promise.all(Object.entries(AREAS).map(async ([key, area]) => {
+    const loc = allLocs.find(l => l.area === area.name);
+    try {
+      const [[fc], md, hist] = await Promise.all([
+        getForecast([loc], true),
+        apiJson(modelsUrl([loc]), { cache: "no-store" }).then(d => [].concat(d)).catch(() => null), // GFS alone if it fails
+        apiJson(historyUrl(loc), { cache: "no-store" }).then(h => hourRows(h.hourly)).catch(() => []),
+      ]);
+      mountainUrls.push(...[modelsUrl([loc]), historyUrl(loc)].map(u => new URL(u).href));
+      const rows = processForecast(fc);
+      const series = modelSeries(rows, 0, md);
+      const ahead = averageSnow(rows, series).snow.reduce((a, v) => a + (v || 0), 0);
+      return { key, area, loc, rows, series, hist, ahead };
+    } catch (err) {
+      console.warn(`Mountain forecast unavailable for ${area.name}`, err);
+      return { key, area, failed: true, ahead: -1 };
+    }
+  }));
+  results.sort((a, b) => b.ahead - a.ahead);
+  // Each resort's card holds the same chart elements as the Snow Summary, with its own ids
+  holder.innerHTML = results.map(r => `<section class="card mtn-card" data-href="?area=${r.key}">
+      <div class="storm-head"><h3><a href="?area=${r.key}">${r.area.name}</a></h3>
+        <span class="muted small">${r.failed ? "" : `${r.loc.name} · ${r.loc.elevation_ft.toLocaleString()} ft · next 16 days: <b class="snow-total">${r1(r.ahead)}"</b>`}</span></div>
+      ${r.failed ? '<p class="muted small">No forecast right now.</p>' : `
+      <div id="mtn-${r.key}-scroll" class="summary-scroll" tabindex="0" aria-label="${r.area.name} snow summary, scrolls sideways">
+        <div id="mtn-${r.key}-inner" class="chart-wrap summary"><canvas id="chart-mtn-${r.key}"></canvas></div>
+      </div>`}
+    </section>`).join("") +
+    // One key for all of them, copied from the Snow Summary's own
+    (document.querySelector("#summary-scroll")?.closest(".card")?.querySelector(".line-key")?.outerHTML ?? "") +
+    `<p class="source">Models: forecast is the average of ${SNOW_MODELS} · already fallen is the GFS + HRRR record</p>`;
+  // Like Storm Results, clicking anywhere on a resort's card opens its forecast. (The name at the
+  // top is also a real link, for the keyboard.) Dragging the chart sideways does not count.
+  holder.querySelectorAll(".mtn-card").forEach(card => {
+    let scrolled = false;
+    card.querySelector(".summary-scroll")?.addEventListener("scroll", () => { scrolled = true; });
+    card.addEventListener("pointerdown", () => { scrolled = false; });
+    card.addEventListener("click", e => {
+      if (scrolled || e.target.closest("a")) return;
+      location.href = card.dataset.href;
+    });
+  });
+  results.filter(r => !r.failed).forEach(r => {
+    dailyScrolled.delete(`mtn-${r.key}`); // a fresh chart opens on today again
+    summaryChart({ id: `mtn-${r.key}`, rows: r.rows, history: r.hist, series: r.series });
+  });
+}
+
+// The storm a snow box reports, from day-by-day model snow (Map of "YYYY-MM-DD" -> inches):
+// the run of back-to-back days with at least 0.05" that includes `today`, or else the last
+// one before it. Null if there is none.
+function latestStorm(daily, today) {
+  const days = [...daily.keys()].sort();
+  let storm = null, from = null;
+  for (let i = 0; i <= days.length; i++) {
+    const wet = i < days.length && daily.get(days[i]) >= 0.05;
+    if (wet && from == null) from = days[i];
+    if (!wet && from != null) {
+      if (from <= today) storm = { from, to: days[i - 1] };
+      from = null;
+    }
+  }
+  return storm;
 }
 
 // ---------- Snow summary ----------
@@ -625,10 +920,22 @@ const barTotals = (fmt = r1, min = 0.05) => ({
     g.textBaseline = "bottom";
     g.fillStyle = "#e6edf5";
     chart.data.labels.forEach((_, i) => {
-      const total = chart.data.datasets.reduce((a, d, di) => a + (chart.isDatasetVisible(di) ? d.data[i] || 0 : 0), 0);
-      if (total < min) return;
+      // Datasets marked `isRain` (rain on the snow summary) are totalled apart from the rest and
+      // get their own green label, one line below the main one
+      const add = rain => chart.data.datasets.reduce((a, d, di) =>
+        a + (chart.isDatasetVisible(di) && !!d.isRain === rain ? d.data[i] || 0 : 0), 0);
+      const total = add(false), rain = add(true);
+      const showTotal = total >= min, showRain = rain >= 0.01;
+      if (!showTotal && !showRain) return;
       const bar = chart.getDatasetMeta(0).data[i];
-      g.fillText(`${fmt(total)}"`, bar.x, chart.scales.y.getPixelForValue(total) - 3);
+      const y = chart.scales.y.getPixelForValue(total + rain) - 3;
+      // The main total on top, with the rain under it, nearest the bar
+      if (showTotal) g.fillText(`${fmt(total)}"`, bar.x, y - (showRain ? 13 : 0));
+      if (showRain) {
+        g.fillStyle = PRECIP_COLORS.rain;
+        g.fillText(`${r2(rain)}"`, bar.x, y);
+        g.fillStyle = "#e6edf5";
+      }
     });
     g.restore();
   },
@@ -719,7 +1026,7 @@ function periodTotals(sections, fmt = r1, scroller = null) {
         const viewLeft = scroller ? scroller.scrollLeft : -Infinity;
         const viewRight = scroller ? Math.min(scroller.scrollLeft + scroller.clientWidth, area.right) : Infinity;
         const seenLeft = Math.max(left, viewLeft), seenRight = Math.min(right, viewRight);
-        const mid = seenRight > seenLeft ? (seenLeft + seenRight) / 2 : (left + right) / 2;
+        let mid = seenRight > seenLeft ? (seenLeft + seenRight) / 2 : (left + right) / 2;
         // Bracket: a line over the bars with a short tick down at each end
         g.strokeStyle = "rgba(139, 155, 176, 0.7)";
         g.lineWidth = 1;
@@ -727,22 +1034,16 @@ function periodTotals(sections, fmt = r1, scroller = null) {
         g.moveTo(left, y + 5); g.lineTo(left, y); g.lineTo(right, y); g.lineTo(right, y + 5);
         g.stroke();
         g.textBaseline = "bottom";
-        // Bottom line, only for a storm under way: how much has already fallen
-        let up = 0;
-        if (s.split) {
-          g.font = "600 11.5px " + family;
-          g.fillStyle = "#e6edf5";
-          g.fillText(s.split, mid, y - 3);
-          up = 15;
-        }
-        // The total, with the storm's snow water (SWE) small and in a darker blue beside it where
-        // the caller gave one. The pair is centred together; under a narrow bracket the word
-        // "SWE" is dropped so neighbouring storms do not run into each other.
-        const big = "600 15px " + family, small = "600 10.5px " + family;
+
+        // Work out every line's text and width first, so the block can be kept in view
+        const big = "600 15px " + family, small = "600 10.5px " + family, splitFont = "600 11.5px " + family;
         const total = `${fmt(s.value)}"`;
         g.font = big;
         const totalWidth = g.measureText(total).width;
-        // After the snow water comes the storm's rain, in the rain green, when there is any
+        // The total, with the storm's snow water (SWE) small and in a darker blue beside it where
+        // the caller gave one, then the storm's rain in the rain green when there is any. Under a
+        // narrow bracket the words "SWE" and "rain" are dropped so neighbouring storms do not run
+        // into each other.
         let sweText = s.swe == null ? "" : `${r2(s.swe)}" SWE`, sweWidth = 0;
         let rainText = s.rain != null && s.rain >= 0.005 ? `${r2(s.rain)}" rain` : "", rainWidth = 0;
         if (sweText || rainText) {
@@ -755,7 +1056,40 @@ function periodTotals(sections, fmt = r1, scroller = null) {
           sweWidth = extra(sweText);
           rainWidth = extra(rainText);
         }
-        const start = mid - (totalWidth + sweWidth + rainWidth) / 2;
+        const lineWidth = totalWidth + sweWidth + rainWidth;
+        g.font = splitFont;
+        const splitWidth = s.split ? g.measureText(s.split).width : 0;
+        // The name: the longest version that fits within the bracket
+        g.font = "10px " + family;
+        const name = s.labels.map(l => l.toUpperCase()).find(l => g.measureText(l).width <= right - left);
+        const nameWidth = name ? g.measureText(name).width : 0;
+
+        // When only the end of a storm is in view at the left edge (a storm that started before
+        // today, with today at the left), the block shifts right as far as it needs to rather
+        // than being cut off. Only for a storm that is partly in view, and only at the left edge,
+        // so labels of storms out of sight or at the right edge never slide over their neighbours.
+        const widest = Math.max(lineWidth, splitWidth, nameWidth);
+        const lo = (Number.isFinite(viewLeft) ? viewLeft : 0) + 4;
+        if (seenRight > seenLeft && left < lo) mid = Math.max(mid, lo + widest / 2);
+
+        // Bottom line, only for a storm under way: how much has already fallen
+        let up = 0;
+        if (s.split) {
+          g.textAlign = "center";
+          g.font = splitFont;
+          g.fillStyle = "#e6edf5";
+          g.fillText(s.split, mid, y - 3);
+          up = 15;
+        }
+        // Above that the storm's name and dates, and on top the total with its SWE and rain
+        g.textAlign = "center";
+        if (name) {
+          g.font = "10px " + family;
+          g.fillStyle = "#8b9bb0";
+          g.fillText(name, mid, y - 3 - up);
+          up += 13;
+        }
+        const start = mid - lineWidth / 2;
         g.textAlign = "left";
         g.font = big;
         // Green (the page's rain colour) when more than half of the water is rain
@@ -772,13 +1106,6 @@ function periodTotals(sections, fmt = r1, scroller = null) {
           g.fillText(rainText, start + totalWidth + sweWidth + 5, y - 5 - up);
         }
         g.textAlign = "center";
-        // The name goes above the total: the longest version that fits within the bracket
-        g.font = "10px " + family;
-        const name = s.labels.map(l => l.toUpperCase()).find(l => g.measureText(l).width <= right - left);
-        if (name) {
-          g.fillStyle = "#8b9bb0";
-          g.fillText(name, mid, y - 22 - up);
-        }
       }
       g.restore();
     },
@@ -801,6 +1128,12 @@ const HISTORY_VARS = ["precipitation", "rain", "showers", "temperature_2m", "win
 // The model's own record of the last few months at the page's forecast point, from Open-Meteo's
 // archive of past forecasts. It is what the model estimated fell, not a measurement.
 async function loadHistory(loc) {
+  snowHistory = hourRows((await apiJson(historyUrl(loc), { cache: "no-store" })).hourly);
+  renderSummary();
+  renderWater();
+  if (allRows.length) renderCharts(allRows.slice(0, activeHours ?? allRows.length)); // the drifting roses use the history
+}
+function historyUrl(loc) {
   const day = offset => { const d = new Date(Date.now() + offset * 86400000); return d.toISOString().slice(0, 10); };
   const p = new URLSearchParams({
     ...pointParams([loc]),
@@ -812,10 +1145,7 @@ async function loadHistory(loc) {
     wind_speed_unit: "mph",
     precipitation_unit: "inch",
   });
-  snowHistory = hourRows((await apiJson("https://historical-forecast-api.open-meteo.com/v1/forecast?" + p, { cache: "no-store" })).hourly);
-  renderSummary();
-  renderWater();
-  if (allRows.length) renderCharts(allRows.slice(0, activeHours ?? allRows.length)); // the drifting roses use the history
+  return "https://historical-forecast-api.open-meteo.com/v1/forecast?" + p;
 }
 
 // A scrolling day-by-day bar chart with storm totals above the bars. Shared by the snow summary
@@ -830,7 +1160,7 @@ async function loadHistory(loc) {
 //   greenWhenRainy         the total is drawn green when more than half of it is rain (water chart)
 //   showRain               the storm's rain is written in green after its snow water (snow chart)
 //   fmt       number => text without the inch mark; min: the least a day needs to count or be labelled
-//   yTitle, tooltipLabel, plugins (extra chart plugins)
+//   yTitle, tooltipLabel, plugins (extra chart plugins), grace (headroom above the bars, default "15%")
 function dailyChart(o) {
   const sum = vals => vals.reduce((a, v) => a + (v || 0), 0);
   const all = [...o.days.keys()].sort();
@@ -921,7 +1251,7 @@ function dailyChart(o) {
         x: { stacked: true, grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0, font: { size: 11 } } },
         // `grace` leaves headroom for the totals written above the bars.
         // On the right, so the scale is in view at the end of the chart the page opens on.
-        y: { stacked: true, beginAtZero: true, grace: "15%", position: "right", title: { display: true, text: o.yTitle },
+        y: { stacked: true, beginAtZero: true, grace: o.grace || "15%", position: "right", title: { display: true, text: o.yTitle },
           afterFit: scale => { scale.width = SUMMARY_AXIS_PX; } },
       },
     },
@@ -949,10 +1279,14 @@ function dailyChart(o) {
 // Day-by-day snow at the page's forecast point: the last HISTORY_DAYS days (the model's estimate
 // of what fell), today and the next fifteen (the model average), with storm totals above the bars.
 function renderSummary() {
-  const rows = allRows;
+  summaryChart({ id: "summary", rows: allRows, history: snowHistory });
+}
+// The same chart for any resort: `rows` is its GFS forecast from the current hour, `history` the
+// model's record, `series` its models (modelSeries); `id` names the chart's elements, as in dailyChart.
+function summaryChart({ id, rows, history, series }) {
   if (!rows.length) return;
-  const past = snowHistory.filter(r => r.time < rows[0].time); // everything before the current hour
-  const avg = averageSnow(rows);
+  const past = history.filter(r => r.time < rows[0].time); // everything before the current hour
+  const avg = averageSnow(rows, series ?? modelSeries(rows));
   const ahead = avg.snow.map(v => v || 0), aheadSwe = avg.swe.map(v => v || 0);
 
   // Bucket every hour into its calendar day
@@ -977,7 +1311,7 @@ function renderSummary() {
   };
 
   dailyChart({
-    id: "summary",
+    id,
     days,
     today: rows[0].time.slice(0, 10),
     hasPast: past.length > 0,
@@ -990,7 +1324,8 @@ function renderSummary() {
     showRain: true,
     fmt: r1,
     min: 0.05, // any day that shows 0.1" or more
-    yTitle: "inches of snow",
+    yTitle: "inches of snow/rain",
+    grace: "30%", // room for a rain label above the snow label
     datasets: keys => [
       { label: "Already fallen (model estimate)", data: keys.map(k => days.get(k).fallen), backgroundColor: "#8b9bb0" },
       // Forecast bars are coloured by snow-to-water ratio, the same scale as the snow ratio chart.
@@ -1000,8 +1335,14 @@ function renderSummary() {
       { label: "Forecast, night", data: keys.map(k => days.get(k).night), ratio: keys.map(k => ratioOf(k, "night")),
         backgroundColor: keys.map(k => ratioColor(ratioOf(k, "night"))), isNight: true,
         borderColor: "#16212f", borderWidth: { top: 0, right: 0, bottom: 1, left: 0 }, borderSkipped: false },
+      // Rain, in inches of water, stacked on top of the snow in the SWE chart's rain colours.
+      // `isRain` keeps it out of the day's snow total (see barTotals).
+      { label: "Rain, already fallen (model estimate)", data: keys.map(k => days.get(k).fallenRain),
+        backgroundColor: WATER_COLORS.rainPast, isRain: true },
+      { label: "Rain, forecast", data: keys.map(k => days.get(k).rain), backgroundColor: WATER_COLORS.rain, isRain: true },
     ],
     tooltipLabel: ctx => {
+      if (ctx.dataset.isRain) return `${ctx.dataset.label}: ${r2(ctx.parsed.y)}" of water`;
       const ratio = ctx.dataset.ratio?.[ctx.dataIndex];
       return `${ctx.dataset.label}: ${r1(ctx.parsed.y)}"` + (ratio != null ? ` (${ratioText(ratio)} snow to water)` : "");
     },
@@ -1374,11 +1715,10 @@ const STATION_SOURCE = "Source: station measurements, not a model";
 const CHART_SOURCES = {
   "chart-summary": `Models: forecast is the average of ${SNOW_MODELS} · already fallen is the GFS + HRRR record`,
   "chart-water": `Models: forecast is the average of ${SNOW_MODELS} · already fallen is the GFS + HRRR record`,
-  "chart-temp": "Model: GFS + HRRR",
-  "chart-wind": "Model: GFS + HRRR",
+  "chart-temp": `Models: average of ${ALL_MODELS}`,
+  "chart-wind": `Models: wind is the average of ${ALL_MODELS} · gusts and direction from GFS + HRRR`,
   "chart-density": "Model: GFS + HRRR temperatures (Kuchera ratio)",
   "chart-snow-level": "Model: GFS + HRRR freezing level",
-  "chart-snow-models": `Models: ${SNOW_MODELS}`,
   "chart-cloud-models": `Models: ${ALL_MODELS}`,
   "chart-temp-models": `Models: ${ALL_MODELS}`,
   "chart-wind-models": `Models: ${ALL_MODELS}`,
@@ -1390,9 +1730,9 @@ const CHART_SOURCES = {
 const HOURLY_SOURCES = {
   precip: `Models: chance from NBM (GFS after day 11) · snow or rain from the average of ${SNOW_MODELS}`,
   cloud: `Models: average of ${ALL_MODELS}`,
-  temp: "Model: GFS + HRRR",
+  temp: `Models: average of ${ALL_MODELS}`,
   feels: "Model: GFS + HRRR",
-  wind: "Model: GFS + HRRR",
+  wind: `Models: wind is the average of ${ALL_MODELS} · gusts and direction from GFS + HRRR`,
   ratio: `Models: snow from the average of ${SNOW_MODELS} · ratio from GFS + HRRR temperatures (Kuchera)`,
 };
 // Writes `text` as the small line at the bottom right of the card that holds the chart
@@ -1485,14 +1825,15 @@ function arrowImage() {
 // One entry per model for the comparison charts. Until the multi-model data arrives
 // (or if it fails), this is just the GFS forecast the rest of the page uses.
 // `rows` is the processed GFS forecast for location number `li` in locations.json.
-function modelSeries(rows, li = 0) {
-  if (!modelData?.[li]) {
+function modelSeries(rows, li = 0, data = modelData) {
+  if (!data?.[li]) {
     return [{ ...MODELS[0], swe: rows.map(r => r.swe), snow: rows.map(r => r.snow), cloud: rows.map(r => r.cloud),
-      pop: rows.map(() => null), temp: rows.map(r => r.temp), wind: rows.map(r => r.wind) }];
+      pop: rows.map(() => null), temp: rows.map(r => r.tempGfs ?? r.temp), wind: rows.map(r => r.windGfs ?? r.wind) }];
   }
-  const h = modelData[li].hourly;
+  const h = data[li].hourly;
   const at = new Map(h.time.map((t, i) => [t, i]));
   const pick = (arr, r) => { const i = at.get(r.time); return arr && i != null ? arr[i] : null; };
+  const none = rows.map(() => null);
   return MODELS.map(m => {
     const snowfall = h[`snowfall_${m.id}`], cloud = h[`cloud_cover_${m.id}`];
     // Open-Meteo reports snowfall at a fixed 7:1 ratio. Convert back to snow water (SWE), then
@@ -1505,11 +1846,11 @@ function modelSeries(rows, li = 0) {
       ...m,
       swe,
       snow: isMain ? rows.map(r => r.snow) : swe.map((w, i) => (w == null ? null : w * rows[i].kuchera)),
-      cloud: rows.map(r => pick(cloud, r)),
-      pop: rows.map(r => pick(h[`precipitation_probability_${m.id}`], r)), // chance of precipitation, %
-      // Temperature and wind for the Model Results charts; the GFS line uses the page's own values
-      temp: isMain ? rows.map(r => r.temp) : rows.map(r => pick(h[`temperature_2m_${m.id}`], r)),
-      wind: isMain ? rows.map(r => r.wind) : rows.map(r => pick(h[`wind_speed_10m_${m.id}`], r)),
+      cloud: m.snowOnly ? none : rows.map(r => pick(cloud, r)), // a snow-only model is on no other chart
+      pop: m.snowOnly ? none : rows.map(r => pick(h[`precipitation_probability_${m.id}`], r)), // chance of precipitation, %
+      // Temperature and wind for the Spaghettis charts; the GFS line uses the page's own values
+      temp: isMain ? rows.map(r => r.tempGfs ?? r.temp) : m.snowOnly ? none : rows.map(r => pick(h[`temperature_2m_${m.id}`], r)),
+      wind: isMain ? rows.map(r => r.windGfs ?? r.wind) : m.snowOnly ? none : rows.map(r => pick(h[`wind_speed_10m_${m.id}`], r)),
     };
   });
 }
@@ -1704,12 +2045,14 @@ function makeLoadingRose(id, rows, drift) {
 }
 
 // Hourly snow and snow water averaged over the snow models; drives the white line on the snowfall
-// chart and the snow tiles. Models marked cloudOnly are left out. The average carries on with
-// whichever models still have data, so past ~11 days it is the GFS alone.
+// chart and the snow tiles. Models marked cloudOnly are left out, and so are those marked
+// notInAverage, which are still returned in `series` so the snowfall charts can draw them.
+// The average carries on with whichever models still have data, so past ~11 days it is the GFS alone.
 function averageSnow(rows, series = modelSeries(rows)) {
-  const snowModels = series.filter(s => !s.cloudOnly);
-  if (snowModels.length < 2) return { series: snowModels, snow: rows.map(r => r.snow), swe: rows.map(r => r.swe) };
-  return { series: snowModels, snow: averageAcross(snowModels, "snow", 1), swe: averageAcross(snowModels, "swe", 1) };
+  const drawn = series.filter(s => !s.cloudOnly);
+  const snowModels = drawn.filter(s => !s.notInAverage);
+  if (snowModels.length < 2) return { series: drawn, snow: rows.map(r => r.snow), swe: rows.map(r => r.swe) };
+  return { series: drawn, snow: averageAcross(snowModels, "snow", 1), swe: averageAcross(snowModels, "swe", 1) };
 }
 
 // Shades the plot behind the lines: pale yellow while the sun is up, slightly darker at night.
@@ -1771,7 +2114,7 @@ const plateauLabels = {
           const at = Math.floor(start + (i - 1 - start) * (k + 1) / (avgs.length + 1));
           // A narrow chart (a phone) has no room for the snow water, so it gets the shorter label
           const roomy = area.right - area.left >= 520;
-          const text = `${d.label}: ${r1(vals[at])}"` + (roomy && swe?.[at] != null ? ` (${r2(swe[at])}" SWE)` : "");
+          const text = `${d.shortLabel ?? d.label}: ${r1(vals[at])}"` + (roomy && swe?.[at] != null ? ` (${r2(swe[at])}" SWE)` : "");
           const w = g.measureText(text).width + 8;
           // Keep the whole label inside the plot
           const x = Math.min(Math.max(pts[at].x, area.left + w / 2), area.right - w / 2);
@@ -1847,54 +2190,44 @@ function renderCharts(ahead) {
     return o;
   };
 
-  // Snowfall chart: every location in its own colour, lowest first. Thin lines are the individual
-  // models (told apart by dash pattern), the thick line is their average.
-  const snowSets = [];
+  // Snowfall by model: one chart for each forecast point, lowest first, leaving out the
+  // ridge-top point (AREA.ridgePoint). Each model's running total is drawn in that model's own
+  // colour (MODELS) and the thick white line is their average. The cards are made here, once.
   const byElevation = locations.map((_, i) => i).sort((a, b) => locations[a].elevation_ft - locations[b].elevation_ft);
-  for (const li of byElevation) {
-    const loc = locations[li];
+  const snowLocs = byElevation.filter(li => locations[li].id !== AREA.ridgePoint);
+  const snowHolder = document.getElementById("snow-model-charts");
+  if (snowHolder && !snowHolder.children.length) {
+    snowHolder.innerHTML = snowLocs.map(li => `<section class="card">
+      <h2>Snowfall by model <span class="muted small">(${locations[li].name} · ${locations[li].elevation_ft.toLocaleString()} ft)</span></h2>
+      <div class="chart-wrap"><canvas id="chart-snow-models-${li}"></canvas></div>
+      <p class="source">Models: ${SNOW_MODELS} · ECMWF IFS is drawn for comparison but is not in the average</p>
+    </section>`).join("");
+  }
+  for (const li of snowLocs) {
     const lr = li === 0 ? rows : fullRows(li);
-    if (!lr.length) continue;
+    if (!snowHolder || !lr.length) continue;
     const avg = averageSnow(lr, li === 0 ? series : modelSeries(lr, li));
+    const snowSets = [];
     // Running totals count from now, so the lines begin at the "Now" mark, not at midnight
     if (avg.series.length > 1) {
       avg.series.forEach(s => {
-        if (hasData(s.snow)) snowSets.push({ label: `${loc.name} · ${s.name}`, data: cumulative(fromNow(s.snow)),
-          borderColor: loc.color + "8c", backgroundColor: loc.color, borderWidth: 1,
-          borderDash: s.dash, pointRadius: 0, order: 1, loc: li });
+        if (hasData(s.snow)) snowSets.push({ label: s.name, data: cumulative(fromNow(s.snow)), borderColor: s.color,
+          backgroundColor: s.color, borderWidth: 1.5, pointRadius: 0, order: 1 });
       });
     }
     // `swe` rides along on the dataset so plateauLabels and the tooltip can show the matching water total
-    snowSets.push({ label: loc.name, data: cumulative(fromNow(avg.snow)), swe: cumulative(fromNow(avg.swe)),
-      borderColor: loc.color, backgroundColor: loc.color, borderWidth: 3, pointRadius: 0, order: 0,
-      loc: li, isAverage: true });
+    snowSets.push({ label: "Average (GFS + HRRR, NBM, NAM)", shortLabel: "Average", data: cumulative(fromNow(avg.snow)), swe: cumulative(fromNow(avg.swe)),
+      borderColor: "#ffffff", backgroundColor: "#ffffff", borderWidth: 3, pointRadius: 0, order: 0, isAverage: true });
+    const snowOptions = compareOptions({ beginAtZero: true, title: { display: true, text: "total snow (in)" } }, v => `${r1(v)}"`);
+    snowOptions.plugins.tooltip.callbacks.label = ctx => `${ctx.dataset.label}: ${r1(ctx.parsed.y)}"` +
+      (ctx.dataset.isAverage ? ` (${r2(ctx.dataset.swe[ctx.dataIndex])}" SWE)` : "");
+    makeChart(`chart-snow-models-${li}`, {
+      type: "line",
+      data: { labels, datasets: snowSets },
+      options: snowOptions,
+      plugins: [plateauLabels, ...shade],
+    });
   }
-  const snowOptions = compareOptions({ beginAtZero: true, title: { display: true, text: "total snow (in)" } }, v => `${r1(v)}"`);
-  // Sixteen lines is too many to list on hover, so the tooltip shows the four averages
-  snowOptions.plugins.tooltip.filter = item => item.dataset.isAverage;
-  snowOptions.plugins.tooltip.callbacks.label = ctx =>
-    `${ctx.dataset.label}: ${r1(ctx.parsed.y)}" (${r2(ctx.dataset.swe[ctx.dataIndex])}" SWE)`;
-  // One legend entry per location; clicking it shows or hides that location's average and model lines
-  snowOptions.plugins.legend = {
-    onClick(e, item, legend) {
-      legend.chart.data.datasets.forEach((d, di) => { if (d.loc === item.loc) legend.chart.setDatasetVisibility(di, item.hidden); });
-      legend.chart.update();
-    },
-    labels: {
-      boxWidth: 12,
-      generateLabels: chart => chart.data.datasets.map((d, di) => ({ d, di })).filter(x => x.d.isAverage).map(({ d, di }) => ({
-        text: `${d.label} (${locations[d.loc].elevation_ft.toLocaleString()} ft)`,
-        fillStyle: d.borderColor, strokeStyle: d.borderColor, lineWidth: 0, fontColor: Chart.defaults.color,
-        hidden: !chart.isDatasetVisible(di), loc: d.loc,
-      })),
-    },
-  };
-  makeChart("chart-snow-models", {
-    type: "line",
-    data: { labels, datasets: snowSets },
-    options: snowOptions,
-    plugins: [plateauLabels, ...shade],
-  });
 
   // On the cloud chart the models share one colour and are told apart by line pattern alone
   const CLOUD_LINE = "#9fb3c8";
@@ -2703,6 +3036,37 @@ document.getElementById("refresh").addEventListener("click", () => {
   note.timer = setTimeout(() => { note.textContent = ""; }, 5000);
 });
 
+// ---------- Refresh button beside "Storm Results" / "UDOT Cameras" ----------
+// Storm Results downloads every resort's measured snow and model record again, but, like the
+// button beside a resort's name, only once three minutes have passed since the last download;
+// before that it just says so. UDOT Cameras reloads its pictures straight away (UDOT updates
+// them about once a minute and they count against no limit).
+document.getElementById("global-refresh").addEventListener("click", () => {
+  const note = document.getElementById("global-refresh-note");
+  const say = text => {
+    note.textContent = text;
+    clearTimeout(note.timer);
+    note.timer = setTimeout(() => { note.textContent = ""; }, 5000);
+  };
+  if (!document.getElementById("view-cameras").hidden) {
+    drawCameras();
+    say("Pictures reloaded.");
+    return;
+  }
+  const mountains = !document.getElementById("view-mountains").hidden;
+  const urls = mountains ? mountainUrls : stormUrls;
+  const times = urls.map(u => apiFetchedAt.get(u)).filter(t => t != null);
+  const wait = times.length ? API_FRESH_MS - (Date.now() - Math.min(...times)) : 0;
+  if (wait > 0) {
+    const mins = Math.ceil(wait / 60000);
+    say(`Up to date. New data can be fetched in ${mins} minute${mins === 1 ? "" : "s"}.`);
+    return;
+  }
+  const redraw = mountains ? () => { mountainsShown = false; return renderMountainForecasts(); }
+    : () => { stormResultsShown = false; return renderStormResults(); };
+  redraw().then(() => say("Refreshed.")).catch(err => console.warn("Refresh failed", err));
+});
+
 // ---------- Forecast / Info tabs ----------
 // The drop-down menus (Switch resort, Guide & Info) also close on a click anywhere else, or on Escape
 const infoMenu = document.getElementById("info-menu");
@@ -2711,21 +3075,29 @@ document.addEventListener("click", e => menus.forEach(m => { if (!m.contains(e.t
 document.addEventListener("keydown", e => { if (e.key === "Escape") menus.forEach(m => { m.open = false; }); });
 document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener("click", () => {
   const view = btn.dataset.view;
-  for (const v of ["forecast", "metrics", "models", "stations", "guide", "info"]) document.getElementById(`view-${v}`).hidden = v !== view;
+  for (const v of ["forecast", "metrics", "models", "stations", "guide", "info", "storms", "mountains", "cameras"]) document.getElementById(`view-${v}`).hidden = v !== view;
   document.querySelectorAll(".tab[data-view]").forEach(b => {
     b.classList.toggle("active", b === btn);
     b.setAttribute("aria-pressed", b === btn);
   });
   // The Guide & Info menu closes after a pick, and its button lights up while one of its pages is showing
-  infoMenu.open = false;
+  menus.forEach(m => { m.open = false; });
   infoMenu.querySelector("summary").classList.toggle("active", view === "guide" || view === "info");
+  // Storm Results and UDOT Cameras cover every resort, so the header shows their name instead
+  const global = { storms: "Storm Results", mountains: "Mountain Forecasts", cameras: "UDOT Cameras" }[view];
+  document.body.classList.toggle("global-mode", !!global);
+  document.getElementById("global-title").textContent = global || "";
+  document.querySelector("#area-menu summary").classList.toggle("active", !!global);
+  if (view === "storms") renderStormResults().catch(err => console.warn("Storm results unavailable", err));
+  if (view === "mountains") renderMountainForecasts().catch(err => console.warn("Mountain forecasts unavailable", err));
+  showCameras(view === "cameras");
   // Keep the tab in the address, so a reload or a switch of resort comes back to it
   history.replaceState(null, "", location.pathname + location.search + (view === "forecast" ? "" : `#${view}`));
   // Charts can't measure themselves while hidden, so refit them when their tab comes back
   Object.values(charts).forEach(c => c.resize());
 }));
-// A link ending in #metrics, #models, #stations, #guide or #info opens straight on that tab
-if (["#metrics", "#models", "#stations", "#guide", "#info"].includes(location.hash)) document.querySelector(`.tab[data-view="${location.hash.slice(1)}"]`).click();
+// A link ending in #metrics, #models, #stations, #guide, #info, #storms, #mountains or #cameras opens straight on that tab
+if (["#metrics", "#models", "#stations", "#guide", "#info", "#storms", "#mountains", "#cameras"].includes(location.hash)) document.querySelector(`.tab[data-view="${location.hash.slice(1)}"]`).click();
 
 // ---------- National Weather Service ----------
 async function loadNws(loc) {
