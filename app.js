@@ -735,9 +735,43 @@ function periodTotals(sections, fmt = r1, scroller = null) {
           g.fillText(s.split, mid, y - 3);
           up = 15;
         }
-        g.font = "600 15px " + family;
-        g.fillStyle = s.past ? "#8b9bb0" : "#9fd8ff";
-        g.fillText(`${fmt(s.value)}"`, mid, y - 3 - up);
+        // The total, with the storm's snow water (SWE) small and in a darker blue beside it where
+        // the caller gave one. The pair is centred together; under a narrow bracket the word
+        // "SWE" is dropped so neighbouring storms do not run into each other.
+        const big = "600 15px " + family, small = "600 10.5px " + family;
+        const total = `${fmt(s.value)}"`;
+        g.font = big;
+        const totalWidth = g.measureText(total).width;
+        // After the snow water comes the storm's rain, in the rain green, when there is any
+        let sweText = s.swe == null ? "" : `${r2(s.swe)}" SWE`, sweWidth = 0;
+        let rainText = s.rain != null && s.rain >= 0.005 ? `${r2(s.rain)}" rain` : "", rainWidth = 0;
+        if (sweText || rainText) {
+          g.font = small;
+          const extra = t => (t ? 5 + g.measureText(t).width : 0);
+          if (totalWidth + extra(sweText) + extra(rainText) > right - left + 24) {
+            if (sweText) sweText = `${r2(s.swe)}"`;
+            if (rainText) rainText = `${r2(s.rain)}"`;
+          }
+          sweWidth = extra(sweText);
+          rainWidth = extra(rainText);
+        }
+        const start = mid - (totalWidth + sweWidth + rainWidth) / 2;
+        g.textAlign = "left";
+        g.font = big;
+        // Green (the page's rain colour) when more than half of the water is rain
+        g.fillStyle = s.rainy ? PRECIP_COLORS.rain : s.past ? "#8b9bb0" : "#9fd8ff";
+        g.fillText(total, start, y - 3 - up);
+        if (sweText) {
+          g.font = small;
+          g.fillStyle = "#4f9dff";
+          g.fillText(sweText, start + totalWidth + 5, y - 5 - up);
+        }
+        if (rainText) {
+          g.font = small;
+          g.fillStyle = PRECIP_COLORS.rain;
+          g.fillText(rainText, start + totalWidth + sweWidth + 5, y - 5 - up);
+        }
+        g.textAlign = "center";
         // The name goes above the total: the longest version that fits within the bracket
         g.font = "10px " + family;
         const name = s.labels.map(l => l.toUpperCase()).find(l => g.measureText(l).width <= right - left);
@@ -791,6 +825,10 @@ async function loadHistory(loc) {
 //   today     the key of the current day; hasPast: whether the past days have loaded yet
 //   datasets  keys => the Chart.js datasets (stacked bars, one value per key)
 //   fallen, toCome   day => how much has already fallen / is still forecast, for the storm totals
+//   fallenSwe, toComeSwe   optional: the same for snow water, written small beside each storm total
+//   fallenRain, toComeRain optional: the rain on those days, already fallen / still forecast
+//   greenWhenRainy         the total is drawn green when more than half of it is rain (water chart)
+//   showRain               the storm's rain is written in green after its snow water (snow chart)
 //   fmt       number => text without the inch mark; min: the least a day needs to count or be labelled
 //   yTitle, tooltipLabel, plugins (extra chart plugins)
 function dailyChart(o) {
@@ -826,6 +864,13 @@ function dailyChart(o) {
       const range = from === to ? md(keys[from]) : `${md(keys[from])}–${md(keys[to])}`;
       const stormDays = keys.slice(from, to + 1).map(k => o.days.get(k));
       const fallen = sum(stormDays.map(o.fallen)), toCome = sum(stormDays.map(o.toCome));
+      // Snow water for the same days, when the caller can supply it (the snow summary does)
+      const fallenSwe = o.fallenSwe ? sum(stormDays.map(o.fallenSwe)) : null;
+      const toComeSwe = o.toComeSwe ? sum(stormDays.map(o.toComeSwe)) : null;
+      // The rain within the same totals, when the caller can supply it (the water chart does)
+      const fallenRain = o.fallenRain ? sum(stormDays.map(o.fallenRain)) : 0;
+      const toComeRain = o.toComeRain ? sum(stormDays.map(o.toComeRain)) : 0;
+      const stormRain = underWay => (underWay ? toComeRain : fallenRain + toComeRain); // matches the number shown
       // A storm that has started but not finished: the big number is only what is still to
       // come, and the line under it gives what has already fallen
       const underWay = fallen >= o.min && toCome >= o.min;
@@ -833,6 +878,11 @@ function dailyChart(o) {
         from, to,
         labels: [`Storm ${range}`, range], // the longest that fits is used
         value: underWay ? toCome : fallen + toCome,
+        swe: toComeSwe == null ? null : underWay ? toComeSwe : fallenSwe + toComeSwe, // matches `value`
+        // Water chart: more than half of the number shown is rain
+        rainy: !!o.greenWhenRainy && stormRain(underWay) > (underWay ? toCome : fallen + toCome) / 2,
+        // Snow chart: the storm's rain, written after its snow water
+        rain: o.showRain ? stormRain(underWay) : null,
         past: to < ti, // entirely before today: a model estimate of what fell
         split: underWay ? `${o.fmt(fallen)}" already fallen` : null,
       });
@@ -909,14 +959,15 @@ function renderSummary() {
   const days = new Map();
   const bucket = t => {
     const key = t.slice(0, 10);
-    if (!days.has(key)) days.set(key, { fallen: 0, day: 0, night: 0, daySwe: 0, nightSwe: 0 });
+    if (!days.has(key)) days.set(key, { fallen: 0, fallenSwe: 0, fallenRain: 0, rain: 0, day: 0, night: 0, daySwe: 0, nightSwe: 0 });
     return days.get(key);
   };
-  past.forEach(r => { bucket(r.time).fallen += r.snow || 0; });
+  past.forEach(r => { const b = bucket(r.time); b.fallen += r.snow || 0; b.fallenSwe += r.swe || 0; b.fallenRain += r.rain || 0; });
   rows.forEach((r, i) => {
     const b = bucket(r.time), part = r.isDay ? "day" : "night";
     b[part] += ahead[i];
     b[part + "Swe"] += aheadSwe[i]; // snow water, so each part's snow-to-water ratio can be worked out
+    b.rain += r.rain || 0;          // the GFS rain, as on the SWE chart
   });
   // Snow-to-water ratio of the forecast snow in one part of a day: total snow over total snow
   // water, which weights each hour by how much fell. Null if there is no snow.
@@ -932,6 +983,11 @@ function renderSummary() {
     hasPast: past.length > 0,
     fallen: d => d.fallen,
     toCome: d => d.day + d.night,
+    fallenSwe: d => d.fallenSwe,
+    toComeSwe: d => d.daySwe + d.nightSwe,
+    fallenRain: d => d.fallenRain,
+    toComeRain: d => d.rain,
+    showRain: true,
     fmt: r1,
     min: 0.05, // any day that shows 0.1" or more
     yTitle: "inches of snow",
@@ -980,6 +1036,9 @@ function renderWater() {
     hasPast: past.length > 0,
     fallen: d => d.rainPast + d.swePast,
     toCome: d => d.rain + d.swe,
+    fallenRain: d => d.rainPast,
+    toComeRain: d => d.rain,
+    greenWhenRainy: true,
     fmt: r2,
     min: 0.01,
     yTitle: "inches of water",

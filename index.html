@@ -14,7 +14,9 @@
   <div class="masthead">
     <!-- Drop-down in the very top right corner for changing location; app.js lists every resort in it -->
     <details id="area-menu" class="menu area-menu">
-      <summary class="tab" aria-label="Locations menu">Locations <span class="caret" aria-hidden="true">▾</span></summary>
+      <summary class="tab burger" aria-label="Locations menu" title="Locations">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
+      </summary>
       <nav id="areas" class="menu-list" aria-label="Locations"></nav>
     </details>
     <h1>Wasatch Backcountry Ski Weather Forecast</h1>
@@ -282,7 +284,7 @@
       <h2>Quick Guide</h2>
       <p>A snow and weather forecast for <span data-fill="area">Alta</span>, built for planning ski days. This guide shows how to read each chart. For where the numbers come from and how they are worked out, see <b>Detailed Info</b>.</p>
       <ul class="legend">
-        <li><span class="sym"><span class="pill">Forecast</span></span><span>The buttons under the resort's name switch between the tabs. To see another resort, open "Locations" in the top right corner of the page.</span></li>
+        <li><span class="sym"><span class="pill">Forecast</span></span><span>The buttons under the resort's name switch between the tabs. To see another resort, open the menu button with three lines in the top right corner of the page.</span></li>
         <li><span class="sym">👆</span><span>Hover or tap any bar or line to see its exact values.</span></li>
         <li><span class="sym"><span class="now-demo"><i></i><b>NOW</b></span></span><span>Dimmed hours left of the dashed "Now" line have already passed today.</span></li>
         <li><span class="sym">🔮</span><span>Everything outside the Weather Stations tab is a model forecast, not a measurement. Trust it less beyond about five days.</span></li>
@@ -433,7 +435,7 @@
    <div id="view-info" class="info" hidden>
     <section class="card">
       <h2>Where the data comes from</h2>
-      <p>Everything is a model forecast for one point: <span data-fill="main">Mid-Collins</span> at <span data-fill="area">Alta</span>, <span data-fill="mainFt">9,662 ft</span>. The exceptions are the snowfall chart, which also shows three other points at <span data-fill="area">Alta</span>, and the temperature chart, which adds <span data-fill="low">Base</span> and <span data-fill="high">Top of Collins</span>. Alta and Solitude each have their own page, picked from the "Locations" menu in the top right corner; everything described here works the same way on both. Apart from the Weather Stations tab and the measured snow boxes at the top of the Forecast tab, nothing here is a measurement, including the "Now" tiles.</p>
+      <p>Everything is a model forecast for one point: <span data-fill="main">Mid-Collins</span> at <span data-fill="area">Alta</span>, <span data-fill="mainFt">9,662 ft</span>. The exceptions are the snowfall chart, which also shows three other points at <span data-fill="area">Alta</span>, and the temperature chart, which adds <span data-fill="low">Base</span> and <span data-fill="high">Top of Collins</span>. Alta and Solitude each have their own page, picked from the menu button with three lines in the top right corner; everything described here works the same way on both. Apart from the Weather Stations tab and the measured snow boxes at the top of the Forecast tab, nothing here is a measurement, including the "Now" tiles.</p>
       <p><b>How often it updates.</b> Weather data is downloaded at most once every three minutes. If you reload the page, reopen it or switch resort within three minutes of the last download, the page reuses the copy your browser saved instead of asking the weather services again. "Updated" at the top right gives the time the forecast was actually downloaded.</p>
       <ul>
         <li><b>Main forecast:</b> the US GFS model from Open-Meteo, with the high-resolution HRRR model filling in the first one to two days. It runs 16 days ahead in hourly steps.</li>
@@ -527,6 +529,9 @@
         <li><b>Grey bars (already fallen):</b> the GFS model's estimate of what fell, run through the same snow calculation. It is not a measurement, because none of the weather stations the page can reach report snowfall. Today's bar has a grey part for the hours already gone and a blue part for the rest of the day.</li>
         <li><b>Where the past comes from:</b> Open-Meteo's archive of past forecasts, downloaded each time the page loads. Nothing is stored by this site, so every visitor sees the same record, and days older than 120 days drop off the left end.</li>
         <li><b>Storms under way:</b> for a storm that has started but not finished, the large number is only the snow still to come. The line under it gives how much has already fallen. Add the two for the storm's full total. The SWE chart works the same way.</li>
+        <li><b>Green totals on the SWE chart:</b> a storm's water total is written in green, the same green as the rain bars, when more than half of that water is forecast (or recorded) as rain. Otherwise it is blue, or grey for a storm that has finished.</li>
+        <li><b>The small darker blue number beside each storm total:</b> the storm's snow water (SWE) in inches, from the same models as the snow. It covers the same thing as the large number next to it: the whole storm, or for a storm under way only what is still to come. Under a very short bracket the word "SWE" is left off to save room.</li>
+        <li><b>The small green number after it:</b> the rain in that storm, in inches of water, shown only when the storm has any. It uses the same rain figures as the SWE chart, and like the other two numbers it covers only what is still to come for a storm under way. Snow water plus rain is the storm's total water.</li>
         <li><b>Storm totals:</b> a storm is a run of back-to-back days with at least 0.1" of snow each. One day with less than that ends the storm, so two bursts of snow separated by a dry day count as two storms. The total adds up everything in those bars, including the grey "already fallen" part if the storm has already started.</li>
       </ul>
       <p>This chart always shows the full range; the 24 h, 72 h, 7-day and 16-day tiles do not zoom it.</p>

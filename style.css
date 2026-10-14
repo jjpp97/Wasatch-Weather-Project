@@ -113,6 +113,12 @@ a { color: var(--accent); }
 /* Locations menu: pinned to the very top right corner of the page */
 .masthead { position: relative; }
 .area-menu { position: absolute; top: 14px; right: 16px; }
+/* Its button: a small square with three lines */
+.menu summary.burger {
+  display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 34px; padding: 0; border-radius: 9px;
+}
+.burger svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .menu-list .tab { display: block; text-decoration: none; border: 0; border-radius: 8px; padding: 9px 12px; text-align: left; background: transparent; white-space: nowrap; }
 .menu-list .tab:hover, .menu-list .tab.active { background: rgba(255, 255, 255, 0.07); color: var(--text); }
 .menu-list a.tab.active::after { content: "✓"; float: right; margin-left: 14px; color: var(--accent); } /* the location being shown */
