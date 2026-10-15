@@ -966,7 +966,7 @@ function drawMountainCams() {
 // Snow Summary for exactly that spot; clicking elsewhere on the map closes it, and clicking the
 // window opens the full forecast for the spot (the ?lat=&lon=&ft= page, see POINT). The map
 // remembers where it was left, in this browser only.
-const MAP_VIEW_KEY = "wasatch-map-view";
+const MAP_VIEW_KEY = "wasatch-map-view-v2"; // v2: the default map changed to Topo, so earlier saved choices are dropped once
 let map = null;
 let mapPopupSeq = 0; // each window's chart gets its own id, so a new one never reuses an old one's
 
@@ -978,7 +978,7 @@ function showMap(on) {
   // Popups are closed by hand below, so a click that closes one does not open another
   map = L.map("map", { closePopupOnClick: false }).setView([view.lat, view.lon], view.zoom);
   // The National Map's base maps, picked with the switcher in the top right corner of the map.
-  // Hybrid is the imagery with roads, trails, place names and contour lines drawn over it. All
+  // Topo opens first. Hybrid is the imagery with roads, trails, place names and contour lines drawn over it. All
   // have detail down to zoom 16; one level more just enlarges it.
   const usgs = (service, credit) => L.tileLayer(`https://basemap.nationalmap.gov/arcgis/rest/services/${service}/MapServer/tile/{z}/{y}/{x}`, {
     maxNativeZoom: 16, maxZoom: 17,
@@ -989,7 +989,7 @@ function showMap(on) {
     Satellite: usgs("USGSImageryOnly", "Imagery"),
     Topo: usgs("USGSTopo", "Topo"),
   };
-  (bases[view.base] ?? bases.Hybrid).addTo(map);
+  (bases[view.base] ?? bases.Topo).addTo(map);
   // Contour lines drawn over whichever map is picked: the National Map's contours (40-foot steps
   // with height labels close in, 50 and 100 feet further out), on a clear background. The
   // service has no ready-made tiles, so each square is drawn on request, which can take a few seconds.
@@ -1006,7 +1006,7 @@ function showMap(on) {
   const overlays = { "Contour lines": contours };
   if (view.contours !== false) contours.addTo(map);
   L.control.layers(bases, overlays, { position: "topright" }).addTo(map);
-  let base = bases[view.base] ? view.base : "Hybrid";
+  let base = bases[view.base] ? view.base : "Topo";
   const save = () => {
     const c = map.getCenter();
     try {
