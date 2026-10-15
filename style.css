@@ -89,6 +89,18 @@ a { color: var(--accent); }
 }
 .refresh:hover { color: var(--text); border-color: var(--muted); }
 .refresh:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The refresh button inside the row of resort tabs, just after the open one */
+.area-tabs .refresh { flex: none; align-self: center; }
+/* Back button at the left of the header: same round shape as the refresh button; greyed out
+   when the step before is not on this site */
+.back {
+  flex: none; width: 30px; height: 30px; padding: 0; border-radius: 50%; cursor: pointer;
+  font: inherit; font-size: 1.05rem; line-height: 1; color: var(--text);
+  background: var(--card); border: 1px solid var(--border);
+}
+.back:hover:not(:disabled) { border-color: var(--muted); }
+.back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.back:disabled { color: var(--muted); opacity: 0.4; cursor: default; }
 /* Wording that belongs to another resort */
 [data-area][hidden] { display: none !important; }
 

@@ -209,7 +209,9 @@ let currentObs = null; // current conditions from the same response
 let modelData = null; // raw multi-model response per location, filled by loadModels()
 
 // ---------- Entry point ----------
-main();
+// main() is called at the very end of this file, once everything below is defined. (A map spot's
+// page reaches pointParams() and the rest without waiting on any download, so starting here
+// failed with "cannot access before initialization".)
 
 async function main() {
   const status = document.getElementById("status");
@@ -269,13 +271,16 @@ function showArea() {
   // A tab for every resort in AREAS beside the refresh button, the one being shown highlighted.
   // They scroll sideways when there is not room for them all.
   const nav = document.getElementById("loc-name");
-  // A spot from the Map gets a tab of its own in front of the resorts: its position and height,
+  // A spot from the Map gets just one tab, in place of the resorts': its position and height,
   // linking back to the Map
-  const spot = POINT ? `<a class="area-tab active" href="?#map" aria-current="page" title="Back to the map">📍 ` +
-    `${POINT.lat.toFixed(4)}, ${POINT.lon.toFixed(4)} · ${locations[0].elevation_ft.toLocaleString()} ft</a>` : "";
-  nav.innerHTML = spot + Object.entries(AREAS).map(([key, a]) =>
-    `<a class="area-tab${key === AREA_KEY ? " active" : ""}" href="?area=${key}"${key === AREA_KEY ? ' aria-current="page"' : ""}>${a.name}</a>`).join("");
+  nav.innerHTML = POINT
+    ? `<a class="area-tab active" href="?#map" aria-current="page" title="Back to the map">📍 ` +
+      `${POINT.lat.toFixed(4)}, ${POINT.lon.toFixed(4)} · ${locations[0].elevation_ft.toLocaleString()} ft</a>`
+    : Object.entries(AREAS).map(([key, a]) =>
+      `<a class="area-tab${key === AREA_KEY ? " active" : ""}" href="?area=${key}"${key === AREA_KEY ? ' aria-current="page"' : ""}>${a.name}</a>`).join("");
   if (POINT) document.getElementById("resort-forecasts").classList.remove("active");
+  // The refresh button sits just after the open resort's tab
+  nav.querySelector(".active")?.after(document.getElementById("refresh"));
   nav.querySelector(".active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   // The same resorts under "Resort Forecasts" in the three-line menu, each opening on its Forecast
   // tab. The arrow beside "Resort Forecasts" shows and hides them.
@@ -3524,17 +3529,63 @@ document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener
   showCameras(view === "cameras");
   showMountainCams(view === "cams");
   showMap(view === "map");
-  // Keep the tab in the address, so a reload or a switch of resort comes back to it
-  history.replaceState(null, "", location.pathname + location.search + (view === "forecast" ? "" : `#${view}`));
+  // Keep the tab in the address, so a reload or a switch of resort comes back to it. Picking a
+  // tab is a step in the browser's history, so Back returns to the tab before; a tab opened by
+  // the address itself or by Back/Forward only rewrites the current step.
+  const url = location.pathname + location.search + (view === "forecast" ? "" : `#${view}`);
+  if (restoringView || url === location.pathname + location.search + location.hash) {
+    history.replaceState(history.state, "", url);
+  } else {
+    history.pushState({ backOk: true }, "", url); // the step before this one is on this site
+  }
+  updateBack();
   // Charts can't measure themselves while hidden, so refit them when their tab comes back
   Object.values(charts).forEach(c => c.resize());
 }));
 // The Cams tab is only there for a resort with cams listed in AREAS, and Weather Stations for one with stations
 if (!AREA.cams) document.querySelector('.tab[data-view="cams"]').remove();
 if (!AREA.stations.length) document.querySelector('.tabs[data-area-pages] .tab[data-view="stations"]').remove();
-// A link ending in #metrics, #models, #stations, #cams, #guide, #info, #storms, #mountains, #cameras, #allstations
-// or #map opens straight on that tab (#cams on a resort without cams stays on the Forecast tab)
-if (["#metrics", "#models", "#stations", "#cams", "#guide", "#info", "#storms", "#mountains", "#cameras", "#allstations", "#map"].includes(location.hash)) document.querySelector(`.tab[data-view="${location.hash.slice(1)}"]`)?.click();
+
+// ---------- Back button ----------
+// The ← at the left of the header, on every page. Each step in the browser's history records in
+// `backOk` whether the step before it is part of this site: a tab picked here always is, and a
+// page opened from a link is when the link was on this site (its referrer). The button goes back
+// when that is so; when going back would leave the site it opens Alta's Forecast tab instead, and
+// it is greyed out only when that is already what is showing.
+let restoringView = false; // true while a tab is opened from the address, not by a click
+if (!history.state || history.state.backOk === undefined) {
+  let fromHere = false;
+  try { fromHere = !!document.referrer && new URL(document.referrer).origin === location.origin; } catch { /* no referrer */ }
+  history.replaceState({ ...(history.state || {}), backOk: fromHere }, "");
+}
+// Alta's Forecast tab is showing: the Alta page (the default when no resort is named) with no tab in the address
+const onAltaForecast = () => !POINT && AREA_KEY === "alta" && !location.hash;
+function updateBack() {
+  const stuck = !history.state?.backOk && onAltaForecast();
+  document.querySelectorAll("button.back").forEach(b => {
+    b.disabled = stuck;
+    b.title = history.state?.backOk || stuck ? "Back" : "Back to the Alta forecast";
+  });
+}
+document.querySelectorAll("button.back").forEach(b => b.addEventListener("click", () => {
+  if (history.state?.backOk) history.back();
+  else if (onAltaForecast()) return;
+  // Already on Alta's page, on another tab: switch to its Forecast tab without reloading
+  else if (!POINT && AREA_KEY === "alta") document.querySelector('.tab[data-view="forecast"]').click();
+  else location.href = location.pathname + "?area=alta";
+}));
+// Opens the tab the address names (#models, #map …, or the Forecast tab with none), without
+// adding a history step. #cams on a resort without cams stays on the Forecast tab.
+function openViewFromAddress() {
+  const btn = (location.hash.length > 1 && document.querySelector(`.tab[data-view="${CSS.escape(location.hash.slice(1))}"]`))
+    || document.querySelector('.tab[data-view="forecast"]');
+  restoringView = true;
+  try { btn.click(); } finally { restoringView = false; }
+}
+// Back and Forward between tabs of this page
+window.addEventListener("popstate", () => { openViewFromAddress(); updateBack(); });
+if (location.hash) openViewFromAddress();
+updateBack();
 
 // ---------- National Weather Service ----------
 async function loadNws(loc) {
@@ -3556,3 +3607,6 @@ async function loadNws(loc) {
     box.innerHTML = `<p class="muted">NWS forecast unavailable right now (${err.message}).</p>`;
   }
 }
+
+// ---------- Start ----------
+main();

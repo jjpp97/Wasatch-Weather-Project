@@ -62,15 +62,20 @@
       <!-- One tab per resort, the one being shown highlighted (showArea in app.js fills them in) -->
       <!-- Shown instead of the resort's name and tabs while Storm Results or Weather Cameras is open -->
       <div class="global-row">
+        <!-- Back to the previous page or tab of this site (goBack in app.js); never off the site -->
+        <button type="button" class="back" title="Back" aria-label="Back">←</button>
         <h2 id="global-title" class="loc-name"></h2>
         <!-- Refreshes everything on Storm Results or Weather Cameras; downloads under three minutes old are reused -->
         <button type="button" id="global-refresh" class="refresh" title="Refresh" aria-label="Refresh">↻</button>
         <span id="global-refresh-note" class="muted small" role="status"></span>
       </div>
       <div class="loc-row">
-        <!-- Refreshes only the tab that is open; downloads under three minutes old are reused -->
-        <button type="button" id="refresh" class="refresh" title="Refresh this tab" aria-label="Refresh this tab">↻</button>
+        <!-- Back to the previous page or tab of this site (goBack in app.js); never off the site -->
+        <button type="button" class="back" title="Back" aria-label="Back">←</button>
         <h2 id="loc-name" class="loc-name area-tabs">Loading…</h2>
+        <!-- Refreshes only the tab that is open; downloads under three minutes old are reused.
+             showArea in app.js moves it in just after the open resort's tab. -->
+        <button type="button" id="refresh" class="refresh" title="Refresh this tab" aria-label="Refresh this tab">↻</button>
         <span id="refresh-note" class="muted small" role="status"></span>
       </div>
       <nav class="tabs" data-area-pages aria-label="Alta pages">
