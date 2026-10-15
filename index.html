@@ -9,6 +9,9 @@
   <meta name="apple-mobile-web-app-title" content="Wasatch Wx">
   <link rel="stylesheet" href="style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <!-- Leaflet draws the Map tab -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 </head>
 <body>
   <div class="masthead">
@@ -23,12 +26,23 @@
         <!-- Every resort's measured snow on one page (renderStormResults in app.js) -->
         <button type="button" class="tab" data-view="storms" aria-pressed="false">Storm Results</button>
         <!-- Every resort's Snow Summary on one page (renderMountainForecasts in app.js) -->
-        <button type="button" class="tab" data-view="mountains" aria-pressed="false">Mountain Forecasts</button>
+        <button type="button" class="tab" data-view="mountains" aria-pressed="false">Forecast Summaries</button>
         <div class="menu-sep" role="separator"></div>
-        <div id="areas"></div>
+        <!-- The resorts' own pages, opening on Alta; the tabs beside the resort name switch between them.
+             The arrow on its right opens a list of every resort (filled by showArea in app.js). -->
+        <div class="menu-split">
+          <a id="resort-forecasts" class="tab active" href="?area=alta">Resort Forecasts</a>
+          <button type="button" id="resort-toggle" class="sub-toggle" aria-expanded="false" aria-controls="resort-list"
+            aria-label="List the resorts" title="List the resorts"><span class="caret" aria-hidden="true">▾</span></button>
+        </div>
+        <div id="resort-list" class="sub-list" hidden></div>
+        <!-- Satellite map: click a spot for its snow forecast (showMap in app.js) -->
+        <button type="button" class="tab" data-view="map" aria-pressed="false">Map</button>
         <div class="menu-sep" role="separator"></div>
-        <!-- UDOT's canyon road cameras (CAMERA_GROUPS in app.js) -->
-        <button type="button" class="tab" data-view="cameras" aria-pressed="false">UDOT Cameras</button>
+        <!-- Alta's mountain cams and UDOT's canyon road cameras (CAMERA_GROUPS in app.js) -->
+        <button type="button" class="tab" data-view="cameras" aria-pressed="false">Weather Cameras</button>
+        <!-- Every resort's weather stations on one page (renderAllStations in app.js) -->
+        <button type="button" class="tab" data-view="allstations" aria-pressed="false">Weather Stations</button>
       </nav>
     </details>
     <!-- Drop-down menu holding the two "about this page" tabs; app.js closes it after a pick -->
@@ -45,18 +59,18 @@
 
   <header class="top">
     <div>
-      <!-- The resort being shown; the "Locations" menu at the top of the page switches to another -->
-      <!-- Shown instead of the resort's name and tabs while Storm Results or UDOT Cameras is open -->
+      <!-- One tab per resort, the one being shown highlighted (showArea in app.js fills them in) -->
+      <!-- Shown instead of the resort's name and tabs while Storm Results or Weather Cameras is open -->
       <div class="global-row">
         <h2 id="global-title" class="loc-name"></h2>
-        <!-- Refreshes everything on Storm Results or UDOT Cameras; downloads under three minutes old are reused -->
+        <!-- Refreshes everything on Storm Results or Weather Cameras; downloads under three minutes old are reused -->
         <button type="button" id="global-refresh" class="refresh" title="Refresh" aria-label="Refresh">↻</button>
         <span id="global-refresh-note" class="muted small" role="status"></span>
       </div>
       <div class="loc-row">
-        <h2 id="loc-name" class="loc-name">Loading…</h2>
-        <!-- Reloads every tab's data for this location; downloads under three minutes old are reused -->
-        <button type="button" id="refresh" class="refresh" title="Refresh the weather data" aria-label="Refresh the weather data">↻</button>
+        <!-- Refreshes only the tab that is open; downloads under three minutes old are reused -->
+        <button type="button" id="refresh" class="refresh" title="Refresh this tab" aria-label="Refresh this tab">↻</button>
+        <h2 id="loc-name" class="loc-name area-tabs">Loading…</h2>
         <span id="refresh-note" class="muted small" role="status"></span>
       </div>
       <nav class="tabs" data-area-pages aria-label="Alta pages">
@@ -64,6 +78,8 @@
         <button type="button" class="tab" data-view="metrics" aria-pressed="false">Backcountry Ski Metrics</button>
         <button type="button" class="tab" data-view="models" aria-pressed="false">Spaghettis</button>
         <button type="button" class="tab" data-view="stations" aria-pressed="false">Weather Stations</button>
+        <!-- Removed by app.js for a resort with no cams listed in AREAS -->
+        <button type="button" class="tab" data-view="cams" aria-pressed="false">Cams</button>
       </nav>
     </div>
     <div class="top-right">
@@ -123,6 +139,12 @@
         </div>
       </section>
     </div>
+   </div>
+
+   <!-- Cams tab: the resort's own mountain cams, highest first (AREA.cams and drawMountainCams in app.js) -->
+   <div id="view-cams" hidden>
+    <div id="mtn-cam-grid" class="camera-grid"></div>
+    <p id="mtn-cam-source" class="source"></p>
    </div>
 
    <!-- Backcountry Ski Metrics tab: a placeholder for now. The forecast wind roses and wind
@@ -195,16 +217,28 @@
     <div id="storm-results"></div>
    </div>
 
-   <!-- Mountain Forecasts (from the Locations menu): every resort's Snow Summary, most snow ahead first -->
+   <!-- Forecast Summaries (from the Locations menu): every resort's Snow Summary, most snow ahead first -->
    <div id="view-mountains" hidden>
     <div id="mountain-forecasts"></div>
    </div>
 
-   <!-- UDOT Cameras (from the Locations menu): one tab per canyon, cameras from the top down -->
+   <!-- Weather Cameras (from the Locations menu): Alta's mountain cams, then one tab per canyon, cameras from the top down -->
    <div id="view-cameras" hidden>
-    <nav id="camera-tabs" class="tabs camera-tabs" aria-label="Canyon"></nav>
+    <nav id="camera-tabs" class="tabs camera-tabs" aria-label="Camera group"></nav>
     <div id="camera-grid" class="camera-grid"></div>
-    <p class="source">Images: <a href="https://cottonwoodcanyons.udot.utah.gov/road-information/">UDOT Cottonwood Canyons</a>, refreshed every minute while this page is open</p>
+    <!-- Filled by drawCameras in app.js with the source of the tab being shown -->
+    <p id="camera-source" class="source"></p>
+   </div>
+
+   <!-- Map (from the Locations menu): satellite imagery; a click opens that spot's Snow Summary -->
+   <div id="view-map" hidden>
+    <div id="map" class="map" aria-label="Satellite map. Click a spot for its snow forecast."></div>
+    <p class="source">Click a spot for its snow forecast, then click the forecast to open the full forecast for that spot. Forecasts come from model grids (HRRR about 3 km, GFS coarser) adjusted to the spot's height, so nearby spots give similar numbers.</p>
+   </div>
+
+   <!-- Weather Stations (from the Locations menu): every resort's stations, a table per resort -->
+   <div id="view-allstations" hidden>
+    <div id="all-stations"></div>
    </div>
 
    <!-- Forecast tab: all the forecast tiles and charts -->
@@ -314,7 +348,7 @@
       <h2>Quick Guide</h2>
       <p>A snow and weather forecast for <span data-fill="area">Alta</span>, built for planning ski days. This guide shows how to read each chart. For where the numbers come from and how they are worked out, see <b>Detailed Info</b>.</p>
       <ul class="legend">
-        <li><span class="sym"><span class="pill">Forecast</span></span><span>The buttons under the resort's name switch between the tabs. To see another resort, open the menu button with three lines in the top right corner of the page.</span></li>
+        <li><span class="sym"><span class="pill">Forecast</span></span><span>The resort tabs at the top (Alta, Solitude, Deer Valley) switch resort; the buttons under them switch between that resort's pages. The menu button with three lines in the top right corner holds the pages that cover every resort, and "Resort Forecasts" there brings you back to Alta.</span></li>
         <li><span class="sym">👆</span><span>Hover or tap any bar or line to see its exact values.</span></li>
         <li><span class="sym"><span class="now-demo"><i></i><b>NOW</b></span></span><span>Dimmed hours left of the dashed "Now" line have already passed today.</span></li>
         <li><span class="sym">🔮</span><span>Everything outside the Weather Stations tab is a model forecast, not a measurement. Trust it less beyond about five days.</span></li>
@@ -465,7 +499,7 @@
    <div id="view-info" class="info" hidden>
     <section class="card">
       <h2>Where the data comes from</h2>
-      <p>Everything is a model forecast for one point: <span data-fill="main">Mid-Collins</span> at <span data-fill="area">Alta</span>, <span data-fill="mainFt">9,662 ft</span>. The exceptions are the snowfall chart, which also shows three other points at <span data-fill="area">Alta</span>, and the temperature chart, which adds <span data-fill="low">Base</span> and <span data-fill="high">Top of Collins</span>. Each resort has its own page, picked from the menu button with three lines in the top right corner; everything described here works the same way on both. Apart from the Weather Stations tab and the measured snow boxes at the top of the Forecast tab, nothing here is a measurement, including the "Now" tiles.</p>
+      <p>Everything is a model forecast for one point: <span data-fill="main">Mid-Collins</span> at <span data-fill="area">Alta</span>, <span data-fill="mainFt">9,662 ft</span>. The exceptions are the snowfall chart, which also shows three other points at <span data-fill="area">Alta</span>, and the temperature chart, which adds <span data-fill="low">Base</span> and <span data-fill="high">Top of Collins</span>. Each resort has its own page, picked with the resort tabs at the top of the page; everything described here works the same way on each. Apart from the Weather Stations tab and the measured snow boxes at the top of the Forecast tab, nothing here is a measurement, including the "Now" tiles.</p>
       <p><b>How often it updates.</b> Weather data is downloaded at most once every three minutes. If you reload the page, reopen it or switch resort within three minutes of the last download, the page reuses the copy your browser saved instead of asking the weather services again. "Updated" at the top right gives the time the forecast was actually downloaded.</p>
       <ul>
         <li><b>Main forecast:</b> the US GFS model from Open-Meteo, with the high-resolution HRRR model filling in the first one to two days. It runs 16 days ahead in hourly steps.</li>

@@ -67,6 +67,20 @@ a { color: var(--accent); }
 }
 .loc-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
 .loc-name { margin: 0; font-size: 1.35rem; }
+/* The resort tabs in place of a single resort name: one line that scrolls sideways when narrow */
+.area-tabs {
+  display: flex; gap: 6px; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain;
+  padding: 2px; margin: -2px; scrollbar-width: none;
+}
+.area-tabs::-webkit-scrollbar { display: none; }
+.area-tab {
+  flex: none; white-space: nowrap; text-decoration: none; font-size: 1.05rem; font-weight: 600; color: var(--muted);
+  background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 5px 14px;
+}
+.area-tab:hover { color: var(--text); border-color: var(--muted); }
+.area-tab.active { color: var(--text); border-color: var(--accent); background: rgba(108, 195, 255, 0.12); }
+.area-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.loc-row .refresh { flex: none; }
 /* Small round refresh button beside the location's name */
 .refresh {
   width: 26px; height: 26px; padding: 0; border-radius: 50%; cursor: pointer;
@@ -130,18 +144,46 @@ a { color: var(--accent); }
 }
 .area-menu { z-index: 2; }
 .menu-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+/* "Resort Forecasts" with a small arrow on its right that opens the list of resorts under it */
+.menu-split { display: flex; align-items: center; gap: 2px; }
+.menu-split .tab { flex: 1; }
+.sub-toggle {
+  flex: none; font: inherit; font-size: 0.85rem; line-height: 1; color: var(--muted); cursor: pointer;
+  background: transparent; border: 0; border-radius: 8px; padding: 9px 10px;
+}
+.sub-toggle:hover, .sub-toggle[aria-expanded="true"] { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.sub-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sub-toggle .caret { display: inline-block; margin: 0; transition: transform 0.15s; }
+.sub-toggle[aria-expanded="true"] .caret { transform: rotate(180deg); }
+.sub-list { display: flex; flex-direction: column; gap: 2px; margin-left: 12px; padding-left: 6px; border-left: 1px solid var(--border); }
+.sub-list[hidden] { display: none; }
+.menu-list .sub-list .tab { font-size: 0.82rem; padding: 7px 12px; }
 /* While Storm Results is open it covers every resort, so the page header says "Storm Results"
    in place of one resort's name, refresh button, tabs and forecast time */
 .global-row { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
 body.global-mode .global-row { display: flex; }
 body.global-mode .loc-row, body.global-mode .tabs[data-area-pages], body.global-mode #updated { display: none; }
-/* UDOT Cameras: canyon tabs, then the cameras two to a row (one on a phone) */
+/* Map: the satellite map fills most of the screen; the window a click opens is in the page's colours */
+/* `isolation` keeps Leaflet's layers (z-index 400 and up) under the drop-down menus */
+.map { height: calc(100vh - 220px); min-height: 380px; border: 1px solid var(--border); border-radius: 12px; background: #0b1119; isolation: isolate; }
+.map-popup .leaflet-popup-content-wrapper, .map-popup .leaflet-popup-tip {
+  background: var(--card); color: var(--text); border: 1px solid var(--border); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.map-popup .leaflet-popup-content { margin: 10px 12px; font: inherit; }
+.map-popup a.leaflet-popup-close-button { color: var(--muted); }
+.map-spot-head { margin: 0 24px 6px 0; }
+.map-spot-note { margin: 6px 0 0; }
+.map-spot.ready { cursor: pointer; }
+.map-spot.ready:hover .map-spot-note { color: var(--text); }
+/* Weather Cameras (and a resort's Cams tab): group tabs, then the cameras two to a row (one on a phone) */
 .camera-tabs { margin: 0 0 12px; }
 .camera-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .camera { margin: 0; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
 .camera img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #0b1119; }
 .camera figcaption { padding: 8px 12px 10px; font-size: 0.85rem; }
 .camera figcaption .muted { display: block; font-size: 0.75rem; margin-top: 2px; }
+/* The resort a cam's picture comes from, on its own line at the bottom of the caption */
+.camera figcaption .cam-credit { display: block; font-size: 0.75rem; margin-top: 4px; color: var(--muted); }
 @media (max-width: 600px) { .camera-grid { grid-template-columns: 1fr; } }
 /* Storm Results: one snow box per resort, the whole box a link to its forecast, with the
    resort's name and its station along the top and bigger measured totals */
@@ -156,7 +198,7 @@ body.global-mode .loc-row, body.global-mode .tabs[data-area-pages], body.global-
 .storm-card .snow-col .value { font-size: 1.75rem; line-height: 1.15; }
 .storm-card .snow-col .swe { font-size: 0.8rem; }
 .storm-card .snow-col .model { font-size: 0.9rem; }
-/* Mountain Forecasts: each resort's card has its name and 16-day total above its Snow Summary */
+/* Forecast Summaries: each resort's card has its name and 16-day total above its Snow Summary */
 .storm-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; margin-bottom: 6px; }
 .storm-head h3 { margin: 0; font-size: 1.15rem; }
 .storm-head h3 a { color: var(--text); text-decoration: none; }
@@ -399,6 +441,11 @@ td.rain { color: var(--rain); }
 .pick-row.active td { background: rgba(108, 195, 255, 0.12); }
 .pick-row.active td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .pick-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Weather Stations page: a station's charts and readings, opened in a row right under it. app.js
+   sets the block's width to the visible part of the table; sticky keeps it in view when the
+   table is scrolled sideways on a phone. */
+.detail-row > td { padding: 12px 0 4px; text-align: left; white-space: normal; border-bottom: 1px solid var(--border); }
+.detail-row #station-detail { position: sticky; left: 0; }
 /* The reading-by-reading table scrolls inside its card, with the header row staying in view */
 .station-log { max-height: 460px; overflow-y: auto; }
 .station-log th { position: sticky; top: 0; background: var(--card); }

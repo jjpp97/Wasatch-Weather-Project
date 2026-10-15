@@ -68,6 +68,21 @@ const AREAS = {
       { id: "HDP", name: "Hidden Peak (Snowbird)", elevation_ft: 11000, lat: 40.5611, lon: -111.6452 },
       { id: "AMB", name: "Mt Baldy", elevation_ft: 11066, lat: 40.5677, lon: -111.6374 },
     ],
+    // The resort's own mountain cams, shown on its Cams tab from highest on the mountain to lowest.
+    // The addresses are the ones alta.com/weather uses; if Alta moves a camera its picture stops
+    // loading and its address needs updating here.
+    cams: [
+      { name: "Mount Baldy", src: "https://app.prismcam.com/public/helpers/realtime_preview.php?c=88&s=720" },
+      { name: "Salt Lake Valley", src: "https://alta-webcams.sfo3.cdn.digitaloceanspaces.com/collins_dtc.jpg" },
+      { name: "Sugarloaf Peak", src: "https://alta-webcams.sfo3.cdn.digitaloceanspaces.com/sugar_peak.jpg" },
+      { name: "East Greeley", src: "https://alta-webcams.sfo3.cdn.digitaloceanspaces.com/Greeley.jpg" },
+      { name: "Mount Superior", src: "https://alta-webcams.sfo3.cdn.digitaloceanspaces.com/Superior.jpg" },
+      { name: "Snow Stake", note: "Collins study plot · board cleared daily at 4am and 4pm, conditions permitting",
+        src: "https://alta-webcams.sfo3.cdn.digitaloceanspaces.com/Collins_Snow_Stake.jpg" },
+      { name: "Albion Basin", src: "https://app.prismcam.com/public/helpers/realtime_preview.php?c=65&s=720" },
+      { name: "High Rustler", src: "https://alta-webcams.sfo3.cdn.digitaloceanspaces.com/Highrustler.jpg" },
+    ],
+    camSource: { name: "Alta Ski Area", url: "https://www.alta.com/weather" },
   },
   solitude: {
     name: "Solitude",
@@ -108,11 +123,30 @@ const AREAS = {
     ],
   },
 };
-const AREA_KEY = (() => {
+// A spot picked on the Map: "?lat=40.5763&lon=-111.6383&ft=9662" opens the full forecast for it.
+// It is a page like a resort's with one forecast point and no stations, measured snow or cams.
+// `ft` is the ground's height there; if it is missing it is looked up when the page opens.
+const POINT = (() => {
+  const q = new URLSearchParams(location.search);
+  const lat = parseFloat(q.get("lat")), lon = parseFloat(q.get("lon")), ft = parseFloat(q.get("ft"));
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon, ft: Number.isFinite(ft) ? ft : null } : null;
+})();
+const AREA_KEY = POINT ? "point" : (() => {
   const asked = (new URLSearchParams(location.search).get("area") || "").toLowerCase();
   return asked in AREAS ? asked : "alta";
 })();
-const AREA = AREAS[AREA_KEY];
+const AREA = POINT
+  ? { name: "Map point", snow: null, tempExtra: {}, ridgePoint: null, ridgeStations: [], stationFeed: null, stations: [] }
+  : AREAS[AREA_KEY];
+
+// The forecast point for a spot on the map, in the shape of an entry in locations.json
+const pointLoc = (lat, lon, ft) => ({ id: "point", area: "Map point", name: "This spot", lat, lon,
+  elevation_ft: Math.round(ft), timezone: "America/Denver", color: "#ffffff" });
+// The ground's height at a spot in feet, from Open-Meteo's elevation data (about 90 m resolution)
+async function pointElevationFt(lat, lon) {
+  const j = await apiJson(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`);
+  return j.elevation[0] * 3.28084;
+}
 
 // ---------- Downloads, kept for three minutes ----------
 // Every weather download goes through apiJson(). The answer is kept in the browser (its Cache
@@ -180,7 +214,9 @@ main();
 async function main() {
   const status = document.getElementById("status");
   try {
-    locations = (await fetch("locations.json").then(r => r.json())).filter(l => l.area === AREA.name);
+    locations = POINT
+      ? [pointLoc(POINT.lat, POINT.lon, POINT.ft ?? await pointElevationFt(POINT.lat, POINT.lon))]
+      : (await fetch("locations.json").then(r => r.json())).filter(l => l.area === AREA.name);
     // The first location drives the whole page; the others only appear on the snowfall chart
     const loc = locations[0];
     showArea();
@@ -192,18 +228,7 @@ async function main() {
     loadHistory(loc).catch(err => console.warn("Snow history unavailable", err));    // past days on the snow summary
     loadMeasured().catch(err => console.warn("Measured snow unavailable", err));     // storm totals from the area's study plot
 
-    const all = await getForecast(locations);
-    locRows = all.map(processForecast);
-    applyModelAverages(); // does nothing yet if the other models have not arrived
-    const data = all[0];
-    const fc = locRows[0];
-    allRows = fc;
-    currentObs = data.current;
-    renderNow(fc, data.current);
-    renderSummary();
-    renderWater();
-    renderDailyForecast();
-    renderCharts(fc);
+    await loadForecast();
     status.hidden = true;
   } catch (err) {
     console.error(err);
@@ -212,20 +237,61 @@ async function main() {
   }
 }
 
+// The GFS + HRRR forecast for every forecast point, and everything on the Forecast tab drawn from it.
+// Run by main() and again by the refresh button; a chosen time range is kept unless it was "16 days",
+// which follows the new forecast's length.
+async function loadForecast() {
+  const all = await getForecast(locations);
+  if (activeHours === allRows.length) activeHours = null;
+  locRows = all.map(processForecast);
+  applyModelAverages(); // does nothing yet if the other models have not arrived
+  const data = all[0];
+  const fc = locRows[0];
+  allRows = fc;
+  currentObs = data.current;
+  renderNow(fc, data.current);
+  renderSummary();
+  renderWater();
+  renderDailyForecast();
+  renderCharts(fc.slice(0, activeHours ?? fc.length));
+}
+
+// The downloads behind each of a resort's tabs that have data, so the refresh button can tell
+// whether the open tab has anything over three minutes old. Filled as the downloads are made.
+const tabDownloads = { forecast: new Set(), models: new Set(), stations: new Set() };
+const track = (tabs, url) => { tabs.forEach(t => tabDownloads[t].add(new URL(url, location.href).href)); return url; };
+
 // The resort's name and the menu of other resorts, and every piece of wording on the page that names the resort or
 // one of its forecast points. In index.html, <span data-fill="main"> is filled with the text
 // for "main" below, and an element with data-area="solitude" only shows on the Solitude page.
 function showArea() {
   document.title = `${AREA.name} · Wasatch Backcountry Ski Weather Forecast`;
-  document.getElementById("loc-name").textContent = AREA.name;
-  // The "Locations" menu lists every resort in AREAS, with the one being shown marked
-  const nav = document.getElementById("areas");
-  nav.innerHTML = Object.entries(AREAS).map(([key, a]) =>
-    `<a class="tab${key === AREA_KEY ? " active" : ""}" href="?area=${key}"${key === AREA_KEY ? ' aria-current="page"' : ""}>${a.name}</a>`).join("");
+  // A tab for every resort in AREAS beside the refresh button, the one being shown highlighted.
+  // They scroll sideways when there is not room for them all.
+  const nav = document.getElementById("loc-name");
+  // A spot from the Map gets a tab of its own in front of the resorts: its position and height,
+  // linking back to the Map
+  const spot = POINT ? `<a class="area-tab active" href="?#map" aria-current="page" title="Back to the map">📍 ` +
+    `${POINT.lat.toFixed(4)}, ${POINT.lon.toFixed(4)} · ${locations[0].elevation_ft.toLocaleString()} ft</a>` : "";
+  nav.innerHTML = spot + Object.entries(AREAS).map(([key, a]) =>
+    `<a class="area-tab${key === AREA_KEY ? " active" : ""}" href="?area=${key}"${key === AREA_KEY ? ' aria-current="page"' : ""}>${a.name}</a>`).join("");
+  if (POINT) document.getElementById("resort-forecasts").classList.remove("active");
+  nav.querySelector(".active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  // The same resorts under "Resort Forecasts" in the three-line menu, each opening on its Forecast
+  // tab. The arrow beside "Resort Forecasts" shows and hides them.
+  const resortList = document.getElementById("resort-list");
+  resortList.innerHTML = Object.entries(AREAS).map(([key, a]) =>
+    `<a class="tab${key === AREA_KEY ? " active" : ""}" href="?area=${key}">${a.name}</a>`).join("");
+  const toggle = document.getElementById("resort-toggle");
+  toggle.onclick = () => {
+    resortList.hidden = !resortList.hidden;
+    toggle.setAttribute("aria-expanded", !resortList.hidden);
+  };
   // Switching resort keeps you on the tab you were looking at
   nav.onclick = e => {
     const a = e.target.closest("a");
-    if (a) a.href = a.getAttribute("href").split("#")[0] + (["#storms", "#mountains", "#cameras"].includes(location.hash) ? "" : location.hash);
+    if (!a || a.getAttribute("href") === "?#map") return; // the map spot's own tab goes back to the Map
+    a.href = a.getAttribute("href").split("#")[0] + (["#storms", "#mountains", "#cameras", "#allstations", "#map"].includes(location.hash) ? "" : location.hash);
   };
   document.querySelector(".tabs[data-area-pages]").setAttribute("aria-label", `${AREA.name} pages`);
 
@@ -247,7 +313,7 @@ function showArea() {
     pointsFt: list(byHeight.map(l => `${l.name} (${ft(l)})`)),
     pointSwatches: byHeight.map(swatch).join(""),
     tempPoints: list(byHeight.filter(l => l === main || l.id in AREA.tempExtra).map(l => l.name)),
-    snowStation: AREA.snow.name,
+    snowStation: AREA.snow?.name ?? "",
     stationNames: list(AREA.stations.map(s => s.name)),
   };
   document.querySelectorAll("[data-fill]").forEach(el => { el.innerHTML = fills[el.dataset.fill] ?? ""; });
@@ -292,7 +358,7 @@ async function getForecast(locs, quiet = false) {
     url = build(HOURLY_VARS_MIN);
     data = await apiJson(url, { cache: "no-store" });
   }
-  if (!quiet) noteDownload(url); // only the page's own forecast sets the "Updated" time
+  if (!quiet) { noteDownload(url); track(["forecast"], url); } // only the page's own forecast sets the "Updated" time
   return [].concat(data); // a single location comes back as one object, several as a list
 }
 // Shows when the page's forecast (at `url`) was downloaded, which can be up to three minutes
@@ -314,7 +380,8 @@ const modelsUrl = locs => "https://api.open-meteo.com/v1/forecast?" + new URLSea
 });
 async function loadModels(locs) {
   try {
-    modelData = [].concat(await apiJson(modelsUrl(locs), { cache: "no-store" }));
+    // The Forecast tab's averages come from these as well as the Spaghettis tab's lines
+    modelData = [].concat(await apiJson(track(["forecast", "models"], modelsUrl(locs)), { cache: "no-store" }));
     applyModelAverages();
     if (allRows.length) {
       renderNow(allRows, currentObs); // snow tiles switch to the model average
@@ -566,7 +633,8 @@ let measured = null;  // { name, elevation_ft, newSnow: [{ t, inches }], latest 
 let snowStorms = [];  // the Snow Summary's storms as { from, to } day keys, set when it is drawn
 
 async function loadMeasured() {
-  measured = parseMeasured(await apiJson(AREA.snow.file, { cache: "no-store" }), AREA.snow);
+  if (!AREA.snow) return; // a map point has no study plot
+  measured = parseMeasured(await apiJson(track(["forecast"], AREA.snow.file), { cache: "no-store" }), AREA.snow);
   refreshMeasuredTiles();
 }
 
@@ -761,12 +829,38 @@ async function renderStormResults() {
   }).join("");
 }
 
-// ---------- UDOT Cameras (in the Locations menu) ----------
-// UDOT's road cameras in and below the Cottonwood canyons, from its Cottonwood Canyons page. Each
+// ---------- Weather Cameras (in the Locations menu) ----------
+// First Alta's own mountain cams (the same list as Alta's Cams tab, highest first), then UDOT's
+// road cameras in and below the Cottonwood canyons, from its Cottonwood Canyons page. A UDOT cam's
 // `view` is a camera view number: the picture is at udottraffic.utah.gov/map/Cctv/<view>, a plain
 // image UDOT updates about once a minute, with no key needed. Listed from the top of each canyon
 // down. If UDOT replaces a camera its picture stops loading and its number needs updating here.
+// A group without `source` is UDOT's; `source` can be one { name, url } or a list of them, and
+// `about` is added to the credit line under the pictures.
+const UDOT_SOURCE = { name: "UDOT Cottonwood Canyons", url: "https://cottonwoodcanyons.udot.utah.gov/road-information/" };
+const SNOWBIRD_SOURCE = { name: "Snowbird", url: "https://www.snowbird.com/the-mountain/webcams/snowstake-webcam/" };
+const SOLITUDE_SOURCE = { name: "Solitude Mountain Resort", url: "https://www.solitudemountain.com/mountain-and-village/webcams" };
+const SNOWBASIN_SOURCE = { name: "Snowbasin Resort", url: "https://www.snowbasin.com/the-mountain/web-cams/" };
+// The line under a resort cam's picture naming the resort it comes from (`s` is { name, url })
+const camCredit = s => (s ? `<span class="cam-credit">Courtesy of <a href="${s.url}" target="_blank" rel="noopener">${s.name}</a></span>` : "");
 const CAMERA_GROUPS = [
+  { key: "alta", name: "Alta", cams: AREAS.alta.cams, source: AREAS.alta.camSource,
+    about: "used with permission, highest on the mountain first" },
+  // Each resort's snow stake cam, from the address its own website uses. Solitude's is a YouTube
+  // live stream, so its picture is the stream's current frame; if Solitude restarts the stream
+  // under a new video id, the id here needs updating.
+  // Each cam's `credit` is the resort named under its picture.
+  { key: "stakes", name: "Snowstakes", source: [AREAS.alta.camSource, SNOWBIRD_SOURCE, SOLITUDE_SOURCE, SNOWBASIN_SOURCE], cams: [
+    { name: "Alta", note: "Collins study plot · board cleared daily at 4am and 4pm, conditions permitting",
+      src: "https://alta-webcams.sfo3.cdn.digitaloceanspaces.com/Collins_Snow_Stake.jpg", credit: AREAS.alta.camSource },
+    { name: "Snowbird", src: "https://img.hdrelay.com/frames/8611e276-7ee5-42c0-b8cd-d9e1890e1cd4/default/last.jpg",
+      credit: SNOWBIRD_SOURCE },
+    { name: "Solitude", note: "Top of the mountain · unofficial snowfall",
+      src: "https://i.ytimg.com/vi/lkEM6EC8NVA/maxresdefault_live.jpg", credit: SOLITUDE_SOURCE },
+    // HDRelay camera id from Snowbasin's player settings (manage.hdrelay.com/player/f9e1b19a-...)
+    { name: "Snowbasin", note: "8,000 ft · 24-hour board, cleared about 4pm daily",
+      src: "https://img.hdrelay.com/frames/09f922af-169d-4949-9bb7-295c6a859daa/default/last.jpg", credit: SNOWBASIN_SOURCE },
+  ] },
   { key: "lcc", name: "Little Cottonwood", cams: [
     { view: 165271, name: "Alta", where: "SR-210 · mile 12.16" },
     { view: 165175, name: "Alta Bypass", where: "SR-210 · mile 10.95" },
@@ -804,7 +898,7 @@ function showCameras(on) {
   cameraTimer = setInterval(() => {
     if (document.hidden) return; // nothing to refresh while the page is out of sight
     const stamp = Date.now();
-    document.querySelectorAll("#camera-grid img").forEach(img => { img.src = img.dataset.src + "?t=" + stamp; });
+    document.querySelectorAll("#camera-grid img").forEach(img => { img.src = camUrl(img.dataset.src, stamp); });
   }, 60000);
 }
 
@@ -820,16 +914,172 @@ function drawCameras() {
   };
   const group = CAMERA_GROUPS.find(g => g.key === cameraGroup);
   const stamp = Date.now();
+  const sources = [].concat(group.source ?? UDOT_SOURCE);
   document.getElementById("camera-grid").innerHTML = group.cams.map(c => {
-    const src = `https://www.udottraffic.utah.gov/map/Cctv/${c.view}`;
+    const src = c.src ?? `https://www.udottraffic.utah.gov/map/Cctv/${c.view}`;
+    const where = c.where ?? c.note;
+    // A resort cam names its resort under the picture; a group with one source credits it for every cam
+    const credit = c.credit ?? (group.source && !Array.isArray(group.source) ? group.source : null);
     return `<figure class="camera">
-      <a href="${src}" target="_blank" rel="noopener"><img src="${src}?t=${stamp}" data-src="${src}" alt="UDOT camera: ${c.name}" loading="lazy"></a>
-      <figcaption>${c.name}<span class="muted">${c.where}</span></figcaption>
+      <a href="${src}" target="_blank" rel="noopener"><img src="${camUrl(src, stamp)}" data-src="${src}" alt="${credit ? credit.name : "UDOT"} camera: ${c.name}" loading="lazy"></a>
+      <figcaption>${c.name}${where ? `<span class="muted">${where}</span>` : ""}${camCredit(credit)}</figcaption>
     </figure>`;
   }).join("");
+  document.getElementById("camera-source").innerHTML = "Images: " +
+    sources.map(s => `<a href="${s.url}">${s.name}</a>`).join(", ") +
+    (group.about ? `, ${group.about}` : "") + "; refreshed every minute while this page is open";
 }
 
-// ---------- Mountain Forecasts (in the Locations menu) ----------
+// ---------- Cams tab (resorts with AREA.cams) ----------
+// The resort's own mountain cams, in the order AREA.cams lists them. While shown, the pictures
+// reload every five minutes; the resort's cameras update less often than UDOT's.
+let mountainCamTimer = null;
+const camUrl = (src, stamp) => src + (src.includes("?") ? "&" : "?") + "t=" + stamp;
+
+function showMountainCams(on) {
+  clearInterval(mountainCamTimer);
+  mountainCamTimer = null;
+  if (!on || !AREA.cams) return;
+  drawMountainCams();
+  mountainCamTimer = setInterval(() => {
+    if (document.hidden) return;
+    const stamp = Date.now();
+    document.querySelectorAll("#mtn-cam-grid img").forEach(img => { img.src = camUrl(img.dataset.src, stamp); });
+  }, 5 * 60000);
+}
+
+function drawMountainCams() {
+  const stamp = Date.now();
+  document.getElementById("mtn-cam-grid").innerHTML = AREA.cams.map(c => `<figure class="camera">
+      <a href="${c.src}" target="_blank" rel="noopener"><img src="${camUrl(c.src, stamp)}" data-src="${c.src}" alt="${AREA.name} cam: ${c.name}" loading="lazy"></a>
+      <figcaption>${c.name}${c.note ? `<span class="muted">${c.note}</span>` : ""}${camCredit(c.credit ?? AREA.camSource)}</figcaption>
+    </figure>`).join("");
+  const s = AREA.camSource;
+  document.getElementById("mtn-cam-source").innerHTML =
+    `Images: <a href="${s.url}">${s.name}</a>, used with permission, highest on the mountain first, refreshed every five minutes while this page is open`;
+}
+
+// ---------- Map (in the Locations menu) ----------
+// USGS hybrid map: satellite imagery with topo lines and names (Leaflet, from index.html), with
+// USGS contour lines over it; plain imagery, a topo map and turning the contours off are in its
+// switcher. Clicking a spot opens a small window with the
+// Snow Summary for exactly that spot; clicking elsewhere on the map closes it, and clicking the
+// window opens the full forecast for the spot (the ?lat=&lon=&ft= page, see POINT). The map
+// remembers where it was left, in this browser only.
+const MAP_VIEW_KEY = "wasatch-map-view";
+let map = null;
+let mapPopupSeq = 0; // each window's chart gets its own id, so a new one never reuses an old one's
+
+function showMap(on) {
+  if (!on) { map?.closePopup(); return; }
+  if (map) { map.invalidateSize(); return; } // it cannot measure itself while its tab is hidden
+  let view = { lat: 40.595, lon: -111.62, zoom: 12 }; // the Cottonwoods
+  try { Object.assign(view, JSON.parse(localStorage.getItem(MAP_VIEW_KEY)) || {}); } catch { /* first visit */ }
+  // Popups are closed by hand below, so a click that closes one does not open another
+  map = L.map("map", { closePopupOnClick: false }).setView([view.lat, view.lon], view.zoom);
+  // The National Map's base maps, picked with the switcher in the top right corner of the map.
+  // Hybrid is the imagery with roads, trails, place names and contour lines drawn over it. All
+  // have detail down to zoom 16; one level more just enlarges it.
+  const usgs = (service, credit) => L.tileLayer(`https://basemap.nationalmap.gov/arcgis/rest/services/${service}/MapServer/tile/{z}/{y}/{x}`, {
+    maxNativeZoom: 16, maxZoom: 17,
+    attribution: `${credit}: <a href="https://www.usgs.gov/programs/national-geospatial-program/national-map" target="_blank" rel="noopener">USGS The National Map</a>`,
+  });
+  const bases = {
+    Hybrid: usgs("USGSImageryTopo", "Imagery and topo"),
+    Satellite: usgs("USGSImageryOnly", "Imagery"),
+    Topo: usgs("USGSTopo", "Topo"),
+  };
+  (bases[view.base] ?? bases.Hybrid).addTo(map);
+  // Contour lines drawn over whichever map is picked: the National Map's contours (40-foot steps
+  // with height labels close in, 50 and 100 feet further out), on a clear background. The
+  // service has no ready-made tiles, so each square is drawn on request, which can take a few seconds.
+  const contours = new (L.TileLayer.extend({
+    getTileUrl(c) {
+      const size = 40075016.68557849 / 2 ** c.z, edge = 20037508.342789244; // Web Mercator metres
+      const xmin = -edge + c.x * size, ymax = edge - c.y * size;
+      return "https://carto.nationalmap.gov/arcgis/rest/services/contours/MapServer/export?" + new URLSearchParams({
+        bbox: [xmin, ymax - size, xmin + size, ymax].join(","), bboxSR: 3857, imageSR: 3857,
+        size: "256,256", format: "png32", transparent: true, f: "image",
+      });
+    },
+  }))("", { minZoom: 10, maxZoom: 17, opacity: 0.3, attribution: "Contours: USGS 3DEP" }); // faint, so the imagery shows through
+  const overlays = { "Contour lines": contours };
+  if (view.contours !== false) contours.addTo(map);
+  L.control.layers(bases, overlays, { position: "topright" }).addTo(map);
+  let base = bases[view.base] ? view.base : "Hybrid";
+  const save = () => {
+    const c = map.getCenter();
+    try {
+      localStorage.setItem(MAP_VIEW_KEY, JSON.stringify({ lat: c.lat, lon: c.lng, zoom: map.getZoom(), base, contours: map.hasLayer(contours) }));
+    } catch { /* not saved */ }
+  };
+  map.on("moveend", save);
+  map.on("baselayerchange", e => { base = e.name; save(); });
+  map.on("overlayadd overlayremove", save);
+  let popupOpen = false;
+  map.on("popupopen", () => { popupOpen = true; });
+  map.on("popupclose", e => {
+    popupOpen = false;
+    const id = `chart-${e.popup.chartId}`;
+    if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+  });
+  map.on("click", e => {
+    if (popupOpen) { map.closePopup(); return; }
+    openSpotForecast(e.latlng.wrap());
+  });
+}
+
+// The small window for one spot: its position and height, then its Snow Summary
+async function openSpotForecast(latlng) {
+  const id = `mapspot-${++mapPopupSeq}`;
+  const lat = Number(latlng.lat.toFixed(4)), lon = Number(latlng.lng.toFixed(4));
+  const width = Math.min(560, map.getSize().x - 70);
+  const box = document.createElement("div");
+  box.className = "map-spot";
+  box.style.width = `${width}px`;
+  box.innerHTML = `<div class="map-spot-head"><b>📍 ${lat.toFixed(4)}, ${lon.toFixed(4)}</b> <span class="muted small"></span></div>
+    <div id="${id}-scroll" class="summary-scroll" tabindex="0" aria-label="Snow summary for this spot, scrolls sideways">
+      <div id="${id}-inner" class="chart-wrap summary"><canvas id="chart-${id}"></canvas></div>
+    </div>
+    <p class="muted small map-spot-note">Loading the snow forecast for this spot…</p>`;
+  const popup = L.popup({ minWidth: width, maxWidth: width, autoPanPadding: [16, 16], className: "map-popup" })
+    .setLatLng(latlng).setContent(box);
+  popup.chartId = id;
+  popup.openOn(map);
+  const note = box.querySelector(".map-spot-note");
+  try {
+    const ft = await pointElevationFt(lat, lon);
+    box.querySelector(".map-spot-head .muted").textContent = `${Math.round(ft).toLocaleString()} ft`;
+    // The same three downloads Forecast Summaries makes for a resort, for this one spot
+    const loc = pointLoc(lat, lon, ft);
+    const [[fc], md, hist] = await Promise.all([
+      getForecast([loc], true),
+      apiJson(modelsUrl([loc]), { cache: "no-store" }).then(d => [].concat(d)).catch(() => null), // GFS alone if it fails
+      apiJson(historyUrl(loc), { cache: "no-store" }).then(h => hourRows(h.hourly)).catch(() => []),
+    ]);
+    if (!map.hasLayer(popup)) return; // closed while it loaded
+    const rows = processForecast(fc);
+    const series = modelSeries(rows, 0, md);
+    summaryChart({ id, rows, history: hist, series });
+    const ahead = averageSnow(rows, series).snow.reduce((a, v) => a + (v || 0), 0);
+    note.innerHTML = `Next 16 days: <b class="snow-total">${r1(ahead)}"</b> · click here for the full forecast at this spot`;
+    // No popup.update() here: it takes the window's contents out and puts them back, which resets
+    // the chart's sideways scroll to four months ago. The window's width is fixed, so none is needed.
+    // Clicking the window opens the full forecast; dragging the chart sideways does not count
+    let scrolled = false;
+    box.querySelector(".summary-scroll").addEventListener("scroll", () => { scrolled = true; });
+    box.addEventListener("pointerdown", () => { scrolled = false; });
+    box.addEventListener("click", () => {
+      if (!scrolled) location.href = `?lat=${lat}&lon=${lon}&ft=${Math.round(ft)}`;
+    });
+    box.classList.add("ready");
+  } catch (err) {
+    console.warn("Spot forecast unavailable", err);
+    note.textContent = "Couldn't load the forecast for this spot right now.";
+  }
+}
+
+// ---------- Forecast Summaries (in the Locations menu) ----------
 // Every resort's Snow Summary on one page, the resort with the most forecast snow over the next
 // 16 days first. Each needs its own GFS forecast, model comparison and model record for its main
 // forecast point: the same three downloads its own page makes, for that one point.
@@ -886,6 +1136,7 @@ async function renderMountainForecasts() {
   });
   results.filter(r => !r.failed).forEach(r => {
     dailyScrolled.delete(`mtn-${r.key}`); // a fresh chart opens on today again
+    dailyLeft.delete(`mtn-${r.key}`);
     summaryChart({ id: `mtn-${r.key}`, rows: r.rows, history: r.hist, series: r.series });
   });
 }
@@ -1119,6 +1370,23 @@ const SUMMARY_MIN_BAR_PX = 44;
 const SUMMARY_AXIS_PX = 50; // width given to the inches scale on the right of the chart
 let snowHistory = [];       // hourly rows for the last HISTORY_DAYS days, filled by loadHistory()
 const dailyScrolled = new Set(); // charts already moved to "now"; after that they stay where the viewer puts them
+// A chart whose card is hidden (another tab is open) cannot measure how wide to be or where today
+// is, so it waits here and is drawn the moment its card is shown
+// A hidden card also loses its sideways scroll (the browser resets it to the far left, four months
+// back), so each chart's position is remembered and put back when its card is shown again.
+const dailyPending = new Map(); // id -> the dailyChart() settings it is waiting with
+const dailyLeft = new Map();    // id -> how far the chart was scrolled
+const dailyWatch = new ResizeObserver(entries => entries.forEach(e => {
+  if (!(e.contentRect.width > 0)) return;
+  const id = e.target.id.replace(/-scroll$/, "");
+  if (dailyPending.has(id)) {
+    const o = dailyPending.get(id);
+    dailyPending.delete(id);
+    dailyChart(o);
+  } else if (dailyLeft.has(id)) {
+    e.target.scrollLeft = dailyLeft.get(id);
+  }
+}));
 
 // What is asked of the archive of past forecasts: enough for the snow calculation, plus wind
 // speed for the drifting potential, which tracks how past wind used up loose snow
@@ -1128,7 +1396,7 @@ const HISTORY_VARS = ["precipitation", "rain", "showers", "temperature_2m", "win
 // The model's own record of the last few months at the page's forecast point, from Open-Meteo's
 // archive of past forecasts. It is what the model estimated fell, not a measurement.
 async function loadHistory(loc) {
-  snowHistory = hourRows((await apiJson(historyUrl(loc), { cache: "no-store" })).hourly);
+  snowHistory = hourRows((await apiJson(track(["forecast"], historyUrl(loc)), { cache: "no-store" })).hourly);
   renderSummary();
   renderWater();
   if (allRows.length) renderCharts(allRows.slice(0, activeHours ?? allRows.length)); // the drifting roses use the history
@@ -1172,6 +1440,13 @@ function dailyChart(o) {
   // sideways inside it. A desktop card shows SUMMARY_VISIBLE_BARS; a phone shows fewer, wider
   // bars (at least SUMMARY_MIN_BAR_PX each) so the day labels stay readable.
   const scroller = document.getElementById(`${o.id}-scroll`);
+  if (!scroller) return;
+  dailyWatch.observe(scroller); // watched for being hidden and shown again (once per element)
+  if (!scroller.clientWidth) { // hidden: drawn when shown, so it can open on today
+    dailyPending.set(o.id, o);
+    return;
+  }
+  dailyPending.delete(o.id);
   // The scale on the right has a fixed width (SUMMARY_AXIS_PX) so the bars can be sized to
   // leave exactly enough room for it beside the last day.
   const room = scroller.clientWidth - SUMMARY_AXIS_PX;
@@ -1264,11 +1539,13 @@ function dailyChart(o) {
     const first = Math.max(0, ti);
     scroller.scrollLeft = x.getPixelForValue(first) - (x.getPixelForValue(1) - x.getPixelForValue(0)) / 2;
     dailyScrolled.add(o.id);
+    dailyLeft.set(o.id, scroller.scrollLeft);
     charts[`chart-${o.id}`].draw();
     // The storm totals re-centre themselves in the part of each bracket that is in view,
     // so the chart is redrawn as it scrolls
     let queued = false;
     scroller.addEventListener("scroll", () => {
+      if (scroller.clientWidth) dailyLeft.set(o.id, scroller.scrollLeft); // not while hidden
       if (queued) return;
       queued = true;
       requestAnimationFrame(() => { queued = false; charts[`chart-${o.id}`]?.draw(); });
@@ -2449,13 +2726,28 @@ const cToF = c => c * 9 / 5 + 32;
 const kmhToMph = k => k * 0.621371;
 
 async function loadStations() {
+  if (!AREA.stations.length) return; // a map point has no stations
   const note = document.getElementById("stations-source");
-  let results;
-  if (AREA.stationFeed === "nws") {
-    results = await Promise.all(AREA.stations.map(async s => {
+  const { results, updated } = await fetchStations(AREA);
+  if (note && updated) {
+    const when = new Date(updated).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+    note.textContent = `${AREA.name}'s stations are collected once an hour, so a reading can be up to an hour or so old. Last collected ${when}.`;
+  }
+  renderStations(results);
+  checkRidgeWind(results).catch(err => console.warn("Station wind check unavailable", err));
+}
+
+// Every station of `area` (an entry in AREAS) with its readings. `updated` is when the hourly job
+// last collected them, for an area whose stations come from a file (null for the live feed).
+async function fetchStations(area) {
+  let results, updated = null;
+  // Only this page's own resort's stations count toward its Weather Stations tab's refresh button
+  const own = url => (area === AREA ? track(["stations"], url) : url);
+  if (area.stationFeed === "nws") {
+    results = await Promise.all(area.stations.map(async s => {
       try {
         // 500 is the most the feed gives at once: 3.5 days at a reading every 10 minutes, more if less often
-        const j = await apiJson(`https://api.weather.gov/stations/${s.id}/observations?limit=500`);
+        const j = await apiJson(own(`https://api.weather.gov/stations/${s.id}/observations?limit=500`));
         return { ...s, obs: (j.features || []).map(f => f.properties) }; // newest first
       } catch {
         return { ...s, obs: [] };
@@ -2466,7 +2758,7 @@ async function loadStations() {
     // to a file every hour (in °F, mph and inches), which is turned into the feed's shape here.
     let file = { columns: [], stations: {} };
     try {
-      file = await apiJson(AREA.stationFeed, { cache: "no-store" });
+      file = await apiJson(own(area.stationFeed), { cache: "no-store" });
     } catch { /* every station is then listed as not reporting */ }
     const col = name => file.columns.indexOf(name);
     const from = (row, name, convert = v => v) => {
@@ -2474,7 +2766,7 @@ async function loadStations() {
       return { value: v == null ? null : convert(v) };
     };
     const fToC = f => (f - 32) * 5 / 9, mphToKmh = m => m / 0.621371;
-    results = AREA.stations.map(s => ({
+    results = area.stations.map(s => ({
       ...s,
       obs: (file.stations[s.id]?.rows || []).map(row => ({
         timestamp: row[col("time")],
@@ -2489,17 +2781,118 @@ async function loadStations() {
         snowBoard: from(row, "snow_interval"),    // inches
       })).reverse(), // the file is oldest first
     }));
-    if (note && file.updated) {
-      const when = new Date(file.updated).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-      note.textContent = `${AREA.name}'s stations are collected once an hour, so a reading can be up to an hour or so old. Last collected ${when}.`;
-    }
+    updated = file.updated ?? null;
   }
-  renderStations(results);
-  checkRidgeWind(results).catch(err => console.warn("Station wind check unavailable", err));
+  return { results, updated };
+}
+
+// The cells of a station's row in a station table, from its latest reading `o`: elevation, time
+// (marked "old" past three hours), temperature, wind, gust and the direction it comes from
+function stationCells(s, o) {
+  const val = (key, convert) => (o[key]?.value == null ? null : convert(o[key].value));
+  const when = new Date(o.timestamp);
+  const old = Date.now() - when > 3 * 3600 * 1000;
+  const dir = o.windDirection?.value;
+  return `<td>${s.elevation_ft.toLocaleString()} ft</td>
+      <td${old ? ' class="muted"' : ""}>${when.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}${old ? " (old)" : ""}</td>
+      <td>${r0(val("temperature", cToF))}°F</td>
+      <td>${r0(val("windSpeed", kmhToMph))} mph</td>
+      <td>${r0(val("windGust", kmhToMph))} mph</td>
+      <td>${dir == null ? "–" : `<span class="arrow" style="transform:rotate(${(dir + 180) % 360}deg)">↑</span> ${compass(dir)}`}</td>`;
+}
+
+// ---------- Weather Stations (in the Locations menu) ----------
+// Every resort's stations on one page: a table per resort, highest station first, each row the
+// station's latest reading. Clicking a station opens its charts and readings in a row right under
+// it: the same #station-detail block the resort's own Weather Stations tab uses, moved into the
+// table while it is open and put back afterwards. Clicking the station again closes it.
+let allStationsShown = false;
+const allStationResults = {}; // area key -> that resort's stations with their readings
+async function renderAllStations() {
+  const holder = document.getElementById("all-stations");
+  if (!holder || allStationsShown) return;
+  allStationsShown = true;
+  homeStationDetail(); // the table is about to be redrawn, so take the detail out of it first
+  holder.innerHTML = '<p class="muted">Loading every resort…</p>';
+  const useful = x => x.temperature?.value != null || x.windSpeed?.value != null;
+  const areas = await Promise.all(Object.entries(AREAS).map(async ([key, area]) => {
+    try {
+      return { key, area, ...(await fetchStations(area)) };
+    } catch (err) {
+      console.warn(`Weather stations unavailable for ${area.name}`, err);
+      return { key, area, results: [], updated: null };
+    }
+  }));
+  holder.innerHTML = areas.map(({ key, area, results, updated }) => {
+    allStationResults[key] = results;
+    const byHeight = [...results].sort((a, b) => b.elevation_ft - a.elevation_ft);
+    const silent = byHeight.filter(s => !s.obs.some(useful)).map(s => s.name);
+    const rows = byHeight.filter(s => s.obs.some(useful)).map(s => `<tr class="pick-row" data-id="${s.id}" data-area="${key}"
+        tabindex="0" role="button" aria-pressed="false" aria-expanded="false">
+      <td>${s.name}</td>
+      ${stationCells(s, s.obs.find(useful))}
+    </tr>`);
+    const collected = updated ? ` · collected hourly, last ${new Date(updated).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "";
+    return `<section class="card">
+      <h2><a href="?area=${key}#stations">${area.name}</a> <span class="muted small">(latest measurements, highest station first${collected})</span></h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Station</th><th>Elevation</th><th>Measured</th><th>Temp</th><th>Wind</th><th>Gust</th><th>From</th></tr></thead>
+          <tbody>${rows.join("") || '<tr><td colspan="7" class="muted">No station is reporting right now.</td></tr>'}</tbody>
+        </table>
+      </div>
+      ${silent.length ? `<p class="muted small station-note">Not reporting right now: ${silent.join(", ")}.</p>` : ""}
+    </section>`;
+  }).join("") + `<p class="source">${STATION_SOURCE} · click a station to open its charts and readings under it</p>`;
+  const pick = e => { const tr = e.target.closest("tr.pick-row"); if (tr) toggleInlineStation(tr); };
+  holder.onclick = pick;
+  holder.onkeydown = e => { if ((e.key === "Enter" || e.key === " ") && e.target.closest("tr.pick-row")) { e.preventDefault(); pick(e); } };
+}
+
+// Opens the picked station's detail in a row just under it, or closes it if it is already open there
+function toggleInlineStation(tr) {
+  const wasOpen = tr.nextElementSibling?.classList.contains("detail-row");
+  homeStationDetail();
+  if (wasOpen) return;
+  const detail = document.getElementById("station-detail");
+  const row = document.createElement("tr");
+  row.className = "detail-row";
+  row.innerHTML = '<td colspan="7"></td>';
+  tr.after(row);
+  row.firstElementChild.appendChild(detail);
+  tr.setAttribute("aria-expanded", "true");
+  fitInlineStation();
+  stationResults = allStationResults[tr.dataset.area];
+  showStation(tr.dataset.id); // drawn after the move, so the charts measure their new place
+}
+
+// The detail is as wide as the visible part of its table, and stays in view if the table scrolls sideways
+function fitInlineStation() {
+  const row = document.querySelector("#all-stations tr.detail-row");
+  if (row) document.getElementById("station-detail").style.width = `${row.closest(".table-wrap").clientWidth}px`;
+}
+window.addEventListener("resize", fitInlineStation);
+
+// Puts the station detail back on the resort's own Weather Stations tab, showing that resort's
+// stations again, and closes any row it had open on the Weather Stations page
+function homeStationDetail() {
+  const detail = document.getElementById("station-detail");
+  const home = document.getElementById("view-stations");
+  document.querySelectorAll("#all-stations tr[aria-expanded]").forEach(tr => {
+    tr.setAttribute("aria-expanded", "false");
+    tr.classList.remove("active");
+    tr.setAttribute("aria-pressed", "false");
+  });
+  if (detail.parentElement === home) return;
+  detail.style.width = "";
+  home.appendChild(detail);
+  document.querySelectorAll("#all-stations tr.detail-row").forEach(r => r.remove());
+  stationResults = ownStationResults;
+  if (ownStationResults.length && ownActiveStation) showStation(ownActiveStation);
+  else detail.hidden = true;
 }
 
 function renderStations(results) {
-  const val = (o, key, convert) => (o[key]?.value == null ? null : convert(o[key].value));
   const rows = [], silent = [];
   // The stations that have reported most in the last 24 hours come first; ties go to the lower one
   const dayAgo = Date.now() - 24 * 3600 * 1000;
@@ -2519,17 +2912,9 @@ function renderStations(results) {
   for (const s of ranked) {
     const o = s.obs.find(useful);
     if (!o) { silent.push(s.name); continue; }
-    const when = new Date(o.timestamp);
-    const old = Date.now() - when > 3 * 3600 * 1000;
-    const dir = o.windDirection?.value;
     rows.push(`<tr class="pick-row" data-id="${s.id}" tabindex="0" role="button" aria-pressed="false">
       <td>${s.name}</td>
-      <td>${s.elevation_ft.toLocaleString()} ft</td>
-      <td${old ? ' class="muted"' : ""}>${when.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}${old ? " (old)" : ""}</td>
-      <td>${r0(val(o, "temperature", cToF))}°F</td>
-      <td>${r0(val(o, "windSpeed", kmhToMph))} mph</td>
-      <td>${r0(val(o, "windGust", kmhToMph))} mph</td>
-      <td>${dir == null ? "–" : `<span class="arrow" style="transform:rotate(${(dir + 180) % 360}deg)">↑</span> ${compass(dir)}`}</td>
+      ${stationCells(s, o)}
       <td>${lately(s)}</td>
     </tr>`);
   }
@@ -2540,16 +2925,22 @@ function renderStations(results) {
     silent.length ? `Not reporting right now: ${silent.join(", ")}.` : "";
 
   // Clicking a station (or pressing Enter or Space on it) shows its charts and readings below
-  stationResults = results;
+  ownStationResults = results;
   const pick = e => { const tr = e.target.closest("tr[data-id]"); if (tr) showStation(tr.dataset.id); };
   tbody.onclick = pick;
   tbody.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(e); } };
   const first = tbody.querySelector("tr[data-id]");
-  if (first) showStation(activeStation ?? first.dataset.id);
+  ownActiveStation ??= first?.dataset.id ?? null;
+  // While the detail is open on the Weather Stations page it is left there; it comes back later
+  if (document.getElementById("station-detail").parentElement.id !== "view-stations") return;
+  stationResults = results;
+  if (ownActiveStation) showStation(ownActiveStation);
 }
 
-let stationResults = []; // every station with its recent readings, newest first
+let stationResults = []; // the stations the detail is showing one of, with their recent readings, newest first
 let activeStation = null; // id of the station whose detail is showing
+let ownStationResults = []; // this resort's own stations (its Weather Stations tab)
+let ownActiveStation = null; // the station picked on that tab
 
 // "2026-10-11T18:10" in the viewer's local time, the label format the charts use
 const localKey = d => {
@@ -2888,7 +3279,9 @@ function showStation(id) {
   const s = stationResults.find(r => r.id === id);
   if (!s || !s.obs.length) return;
   activeStation = id;
-  document.querySelectorAll("#stations tbody tr[data-id]").forEach(tr => {
+  if (stationResults === ownStationResults) ownActiveStation = id;
+  // Rows on the resort's own tab and on the Weather Stations page; ids are unique across resorts
+  document.querySelectorAll("tr.pick-row[data-id]").forEach(tr => {
     tr.classList.toggle("active", tr.dataset.id === id);
     tr.setAttribute("aria-pressed", tr.dataset.id === id);
   });
@@ -3020,26 +3413,49 @@ async function checkRidgeWind(results) {
     `and was off by about ${r0(miss)} mph in a typical hour.`;
 }
 
-// ---------- Refresh button beside the location's name ----------
-// Reloading the page gathers everything again for every tab of this location (forecast, model
-// results, weather stations), and apiJson() only really downloads what is over three minutes
-// old. If nothing is that old yet, a reload would change nothing, so the button just says so.
+// ---------- Refresh button to the left of the resort tabs ----------
+// Refreshes only the tab that is open. Forecast gathers its forecast, model averages, model
+// record, measured snow and NWS text again; Spaghettis the model comparison; Weather Stations the
+// station readings; Cams reloads its pictures. apiJson() only really downloads what is over three
+// minutes old, so if none of the open tab's downloads is that old yet the button just says so.
+const TAB_REFRESH = {
+  forecast: () => {
+    const loc = locations[0];
+    loadNws(loc);
+    loadModels(locations);
+    loadHistory(loc).catch(err => console.warn("Snow history unavailable", err));
+    loadMeasured().catch(err => console.warn("Measured snow unavailable", err));
+    return loadForecast();
+  },
+  models: () => loadModels(locations),
+  stations: () => loadStations(),
+};
 document.getElementById("refresh").addEventListener("click", () => {
-  const times = [...apiFetchedAt.values()];
-  const oldest = times.length ? Math.min(...times) : 0;
-  const wait = API_FRESH_MS - (Date.now() - oldest);
-  if (wait <= 0) { location.reload(); return; }
   const note = document.getElementById("refresh-note");
-  const mins = Math.ceil(wait / 60000);
-  note.textContent = `Up to date. New data can be fetched in ${mins} minute${mins === 1 ? "" : "s"}.`;
-  clearTimeout(note.timer);
-  note.timer = setTimeout(() => { note.textContent = ""; }, 5000);
+  const say = text => {
+    note.textContent = text;
+    clearTimeout(note.timer);
+    note.timer = setTimeout(() => { note.textContent = ""; }, 5000);
+  };
+  const view = ["forecast", "metrics", "models", "stations", "cams", "guide", "info"]
+    .find(v => !document.getElementById(`view-${v}`).hidden);
+  if (view === "cams") { drawMountainCams(); say("Pictures reloaded."); return; }
+  if (!TAB_REFRESH[view]) { say("Nothing on this tab to refresh."); return; }
+  const times = [...tabDownloads[view]].map(u => apiFetchedAt.get(u)).filter(t => t != null);
+  const wait = times.length ? API_FRESH_MS - (Date.now() - Math.min(...times)) : 0;
+  if (wait > 0) {
+    const mins = Math.ceil(wait / 60000);
+    say(`Up to date. New data can be fetched in ${mins} minute${mins === 1 ? "" : "s"}.`);
+    return;
+  }
+  Promise.resolve(TAB_REFRESH[view]()).then(() => say("Refreshed."))
+    .catch(err => { console.warn("Refresh failed", err); say("Couldn't refresh right now."); });
 });
 
-// ---------- Refresh button beside "Storm Results" / "UDOT Cameras" ----------
+// ---------- Refresh button beside "Storm Results" / "Weather Cameras" ----------
 // Storm Results downloads every resort's measured snow and model record again, but, like the
 // button beside a resort's name, only once three minutes have passed since the last download;
-// before that it just says so. UDOT Cameras reloads its pictures straight away (UDOT updates
+// before that it just says so. Weather Cameras reloads its pictures straight away (UDOT updates
 // them about once a minute and they count against no limit).
 document.getElementById("global-refresh").addEventListener("click", () => {
   const note = document.getElementById("global-refresh-note");
@@ -3051,6 +3467,17 @@ document.getElementById("global-refresh").addEventListener("click", () => {
   if (!document.getElementById("view-cameras").hidden) {
     drawCameras();
     say("Pictures reloaded.");
+    return;
+  }
+  // The Map has nothing to refresh: a spot's forecast is fetched fresh each time it is clicked
+  if (!document.getElementById("view-map").hidden) {
+    say("Click a spot on the map for its latest forecast.");
+    return;
+  }
+  // Weather Stations redraws straight away; readings under three minutes old come from the saved copy
+  if (!document.getElementById("view-allstations").hidden) {
+    allStationsShown = false;
+    renderAllStations().then(() => say("Refreshed.")).catch(err => console.warn("Refresh failed", err));
     return;
   }
   const mountains = !document.getElementById("view-mountains").hidden;
@@ -3075,7 +3502,7 @@ document.addEventListener("click", e => menus.forEach(m => { if (!m.contains(e.t
 document.addEventListener("keydown", e => { if (e.key === "Escape") menus.forEach(m => { m.open = false; }); });
 document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener("click", () => {
   const view = btn.dataset.view;
-  for (const v of ["forecast", "metrics", "models", "stations", "guide", "info", "storms", "mountains", "cameras"]) document.getElementById(`view-${v}`).hidden = v !== view;
+  for (const v of ["forecast", "metrics", "models", "stations", "cams", "guide", "info", "storms", "mountains", "cameras", "allstations", "map"]) document.getElementById(`view-${v}`).hidden = v !== view;
   document.querySelectorAll(".tab[data-view]").forEach(b => {
     b.classList.toggle("active", b === btn);
     b.setAttribute("aria-pressed", b === btn);
@@ -3083,28 +3510,38 @@ document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener
   // The Guide & Info menu closes after a pick, and its button lights up while one of its pages is showing
   menus.forEach(m => { m.open = false; });
   infoMenu.querySelector("summary").classList.toggle("active", view === "guide" || view === "info");
-  // Storm Results and UDOT Cameras cover every resort, so the header shows their name instead
-  const global = { storms: "Storm Results", mountains: "Mountain Forecasts", cameras: "UDOT Cameras" }[view];
+  // Storm Results and Weather Cameras cover every resort, so the header shows their name instead
+  const global = { storms: "Storm Results", mountains: "Forecast Summaries", cameras: "Weather Cameras", allstations: "Weather Stations", map: "Map" }[view];
   document.body.classList.toggle("global-mode", !!global);
   document.getElementById("global-title").textContent = global || "";
   document.querySelector("#area-menu summary").classList.toggle("active", !!global);
+  // "Resort Forecasts" in that menu is ticked while a resort's own page is showing
+  document.getElementById("resort-forecasts").classList.toggle("active", !global && !POINT);
   if (view === "storms") renderStormResults().catch(err => console.warn("Storm results unavailable", err));
   if (view === "mountains") renderMountainForecasts().catch(err => console.warn("Mountain forecasts unavailable", err));
+  if (view === "allstations") renderAllStations().catch(err => console.warn("Weather stations unavailable", err));
+  if (view === "stations") homeStationDetail(); // back from the Weather Stations page, if it was open there
   showCameras(view === "cameras");
+  showMountainCams(view === "cams");
+  showMap(view === "map");
   // Keep the tab in the address, so a reload or a switch of resort comes back to it
   history.replaceState(null, "", location.pathname + location.search + (view === "forecast" ? "" : `#${view}`));
   // Charts can't measure themselves while hidden, so refit them when their tab comes back
   Object.values(charts).forEach(c => c.resize());
 }));
-// A link ending in #metrics, #models, #stations, #guide, #info, #storms, #mountains or #cameras opens straight on that tab
-if (["#metrics", "#models", "#stations", "#guide", "#info", "#storms", "#mountains", "#cameras"].includes(location.hash)) document.querySelector(`.tab[data-view="${location.hash.slice(1)}"]`).click();
+// The Cams tab is only there for a resort with cams listed in AREAS, and Weather Stations for one with stations
+if (!AREA.cams) document.querySelector('.tab[data-view="cams"]').remove();
+if (!AREA.stations.length) document.querySelector('.tabs[data-area-pages] .tab[data-view="stations"]').remove();
+// A link ending in #metrics, #models, #stations, #cams, #guide, #info, #storms, #mountains, #cameras, #allstations
+// or #map opens straight on that tab (#cams on a resort without cams stays on the Forecast tab)
+if (["#metrics", "#models", "#stations", "#cams", "#guide", "#info", "#storms", "#mountains", "#cameras", "#allstations", "#map"].includes(location.hash)) document.querySelector(`.tab[data-view="${location.hash.slice(1)}"]`)?.click();
 
 // ---------- National Weather Service ----------
 async function loadNws(loc) {
   const box = document.getElementById("nws");
   try {
-    const point = await apiJson(`https://api.weather.gov/points/${loc.lat},${loc.lon}`);
-    const fc = await apiJson(point.properties.forecast);
+    const point = await apiJson(track(["forecast"], `https://api.weather.gov/points/${loc.lat},${loc.lon}`));
+    const fc = await apiJson(track(["forecast"], point.properties.forecast));
 
     box.innerHTML = fc.properties.periods.map(p => `
       <div class="nws-period" title="${p.detailedForecast.replace(/"/g, "&quot;")}">
