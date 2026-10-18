@@ -256,11 +256,13 @@ async function loadForecast() {
   renderWater();
   renderDailyForecast();
   renderCharts(fc.slice(0, activeHours ?? fc.length));
+  // The Beta tab blends against this forecast's hours and snow ratios
+  if (betaWaiting) { betaWaiting = false; loadBeta(); } else if (betaData) drawBeta();
 }
 
 // The downloads behind each of a resort's tabs that have data, so the refresh button can tell
 // whether the open tab has anything over three minutes old. Filled as the downloads are made.
-const tabDownloads = { forecast: new Set(), models: new Set(), stations: new Set() };
+const tabDownloads = { forecast: new Set(), models: new Set(), stations: new Set(), beta: new Set() };
 const track = (tabs, url) => { tabs.forEach(t => tabDownloads[t].add(new URL(url, location.href).href)); return url; };
 
 // The resort's name and the menu of other resorts, and every piece of wording on the page that names the resort or
@@ -1084,6 +1086,307 @@ async function openSpotForecast(latlng) {
   }
 }
 
+// ---------- Beta tab (Alta only) ----------
+// An experimental Snow Summary. Each model's recent runs come from Open-Meteo's archive of single
+// runs; within a model each run's weight halves for every BETA_HALF_LIFE hours of its age, and the
+// models are then averaged, the fresher ones counting for more in the first day (BETA_FRESH).
+// Snow water becomes snow with the live GFS's hourly Kuchera ratio, as in modelSeries. Nothing
+// here touches the Forecast tab's Snow Summary.
+//   every  hours between the runs the archive keeps; back: how far back to look for runs, in hours
+//   delay  typical hours from a run's start until it can be downloaded (replaced by Open-Meteo's own
+//          figure when its metadata loads); swe: how the run's snow water is worked out
+const BETA_MODELS = [
+  { key: "hrrr", id: "ncep_hrrr_conus", name: "HRRR", every: 3, back: 18, days: 3, delay: 1.9, color: "#ff6b8b" },
+  { key: "gfs", id: "ncep_gfs013", name: "GFS", every: 6, back: 30, days: 16, delay: 5.4, color: "#ff8a5c" },
+  { key: "nbm", id: "ncep_nbm_conus", name: "NBM", every: 3, back: 27, days: 12, delay: 1.4, color: "#ffd166" },
+  { key: "nam", id: "ncep_nam_conus", name: "NAM", every: 6, back: 24, days: 3, delay: 2.7, color: "#6cc3ff" },
+];
+// The models averaged, as on the Forecast tab: HRRR's runs stand in for the GFS while they reach an hour
+const BETA_MEMBERS = [
+  { key: "gfs", name: "GFS + HRRR", color: "#ff8a5c", pools: ["hrrr", "gfs"] },
+  { key: "nbm", name: "NBM", color: "#ffd166", pools: ["nbm"] },
+  { key: "nam", name: "NAM", color: "#6cc3ff", pools: ["nam"] },
+];
+// [hours ahead, value] points, joined by straight lines
+const BETA_HALF_LIFE = [[0, 3], [24, 3], [48, 5], [120, 12]];   // hours of age that halve a run's weight
+const BETA_FRESH = [[0, 1 / 6], [24, 1 / 6], [48, 0]];          // across models: halvings per hour of the newest run's age
+const lerpAt = (pts, x) => {
+  if (x <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (x <= pts[i][0]) { const [x0, y0] = pts[i - 1], [x1, y1] = pts[i]; return y0 + (y1 - y0) * (x - x0) / (x1 - x0); }
+  }
+  return pts[pts.length - 1][1];
+};
+
+let betaData = null;     // { runs, fetchedAt } once loaded
+let betaWaiting = false; // the tab was opened before the forecast had loaded
+
+// Every run of one model the archive has from the last `back` hours, as { model, init, swe: Map(time -> inches) }.
+// Runs it does not have (yet) are skipped.
+async function betaRuns(m, loc) {
+  const H = 3600000, now = Date.now();
+  const inits = [];
+  for (let t = Math.floor(now / (m.every * H)) * m.every * H; t >= now - m.back * H; t -= m.every * H) inits.push(t);
+  const runs = await Promise.all(inits.map(async init => {
+    const url = "https://single-runs-api.open-meteo.com/v1/forecast?" + new URLSearchParams({
+      latitude: loc.lat, longitude: loc.lon, elevation: Math.round(loc.elevation_ft * 0.3048), timezone: loc.timezone,
+      hourly: "precipitation,rain,showers,snowfall", models: m.id, run: new Date(init).toISOString().slice(0, 16),
+      forecast_days: m.days, precipitation_unit: "inch",
+    });
+    try {
+      const h = (await apiJson(track(["beta"], url), { cache: "no-store" })).hourly;
+      const swe = new Map();
+      h.time.forEach((t, i) => {
+        // The GFS's own way, as in hourRows; the others from their snowfall, reported at 7 to 1 (see modelSeries)
+        const v = m.key === "gfs"
+          ? (h.precipitation[i] == null ? null : Math.max(0, h.precipitation[i] - (h.rain[i] ?? 0) - (h.showers[i] ?? 0)))
+          : (h.snowfall[i] == null ? null : h.snowfall[i] / 7);
+        if (v != null) swe.set(t, v);
+      });
+      return swe.size ? { model: m, init, swe } : null;
+    } catch {
+      return null;
+    }
+  }));
+  return runs.filter(Boolean);
+}
+
+// The blend for every hour of `rows`: { swe, snow, parts: per model { member, swe, share, newestShare, weights } }
+function betaBlend(rows, runs) {
+  const now = Date.now();
+  const pool = key => runs.filter(r => r.model.key === key);
+  return rows.map((r, lead) => {
+    const half = lerpAt(BETA_HALF_LIFE, lead), k = lerpAt(BETA_FRESH, lead);
+    const parts = [];
+    for (const member of BETA_MEMBERS) {
+      for (const key of member.pools) { // the first pool with runs that reach this hour
+        const have = pool(key).filter(run => run.swe.has(r.time));
+        if (!have.length) continue;
+        const ages = have.map(run => (now - run.init) / 3600000);
+        const w = ages.map(a => 0.5 ** (a / half));
+        const sum = w.reduce((a, b) => a + b, 0);
+        const newest = Math.min(...ages);
+        parts.push({
+          member, source: key,
+          swe: have.reduce((a, run, i) => a + run.swe.get(r.time) * w[i], 0) / sum,
+          newestShare: w[ages.indexOf(newest)] / sum,
+          fresh: 0.5 ** (newest * k),
+          weights: have.map((run, i) => ({ run, w: w[i] / sum })),
+        });
+        break;
+      }
+    }
+    const F = parts.reduce((a, p) => a + p.fresh, 0);
+    const swe = parts.length ? parts.reduce((a, p) => a + p.swe * p.fresh, 0) / F : null;
+    parts.forEach(p => { p.share = p.fresh / F; });
+    return { swe, snow: swe == null ? null : swe * r.kuchera, parts };
+  });
+}
+
+// Opening the tab: loads the runs the first time (and again from its refresh button)
+function showBeta() {
+  if (!betaData) loadBeta();
+  else drawBeta();
+}
+async function loadBeta() {
+  const status = document.getElementById("beta-status");
+  if (!allRows.length) { betaWaiting = true; return; } // loadForecast() calls back once the forecast is in
+  status.textContent = "Loading the recent model runs…";
+  const loc = locations[0];
+  // Open-Meteo's own figure for how long after its start each model's latest run became available
+  const meta = Promise.all(BETA_MODELS.map(m => apiJson(`https://api.open-meteo.com/data/${m.id}/static/meta.json`)
+    .then(j => { m.delay = (j.last_run_availability_time - j.last_run_initialisation_time) / 3600; })
+    .catch(() => {}))); // the typical figure in BETA_MODELS stays
+  const [runs] = await Promise.all([Promise.all(BETA_MODELS.map(m => betaRuns(m, loc))).then(r => r.flat()), meta]);
+  betaData = { runs, fetchedAt: Date.now() };
+  drawBeta();
+}
+
+function drawBeta() {
+  const status = document.getElementById("beta-status");
+  if (!betaData || !allRows.length) return;
+  const rows = allRows;
+  const hours = betaBlend(rows, betaData.runs);
+  if (!betaData.runs.length || hours.every(h => h.swe == null)) {
+    status.textContent = "The model run archive could not be reached right now. Try the refresh button in a few minutes.";
+    return;
+  }
+  const counts = BETA_MODELS.map(m => `${m.name} ${betaData.runs.filter(r => r.model === m).length}`).join(", ");
+  status.textContent = `Runs in use: ${counts}. Loaded ${new Date(betaData.fetchedAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}.`;
+
+  summaryChart({ id: "beta", rows, history: snowHistory, avg: { snow: hours.map(h => h.snow), swe: hours.map(h => h.swe) } });
+
+  drawBetaCompare(rows, hours.map(h => h.snow));
+
+  // Hours gathered into the Snow Summary's days
+  const days = [];
+  hours.forEach((h, i) => {
+    const key = rows[i].time.slice(0, 10);
+    let d = days[days.length - 1];
+    if (!d || d.key !== key) days.push(d = { key, n: 0, share: {}, newest: {}, newestN: {} });
+    d.n += 1;
+    h.parts.forEach(p => {
+      d.share[p.member.key] = (d.share[p.member.key] || 0) + p.share;
+      d.newest[p.member.key] = (d.newest[p.member.key] || 0) + p.newestShare;
+      d.newestN[p.member.key] = (d.newestN[p.member.key] || 0) + 1;
+    });
+  });
+  const labels = days.map((d, i) => {
+    const date = new Date(d.key + "T12:00");
+    return [i === 0 ? "Today" : date.toLocaleDateString([], { weekday: "short" }), `${date.getMonth() + 1}/${date.getDate()}`];
+  });
+  const pct = v => `${Math.round(v * 100)}%`;
+  const barOptions = (stacked, yTitle) => ({
+    responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+    plugins: { legend: { labels: { boxWidth: 12 } },
+      tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y == null ? "–" : pct(ctx.parsed.y)}` } } },
+    scales: {
+      x: { stacked, grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0, font: { size: 10 } } },
+      y: { stacked, min: 0, max: 1, position: "right", title: { display: true, text: yTitle }, ticks: { callback: pct } },
+    },
+  });
+
+  makeChart("chart-beta-models", {
+    type: "bar",
+    data: { labels, datasets: BETA_MEMBERS.map(m => ({ label: m.name, backgroundColor: m.color,
+      data: days.map(d => (d.share[m.key] || 0) / d.n) })) },
+    options: barOptions(true, "share of the average"),
+  });
+  makeChart("chart-beta-newest", {
+    type: "line",
+    data: { labels, datasets: BETA_MEMBERS.map(m => ({ label: m.name, borderColor: m.color, backgroundColor: m.color,
+      borderWidth: 2, pointRadius: 3, spanGaps: false,
+      data: days.map(d => (d.newestN[m.key] ? d.newest[m.key] / d.newestN[m.key] : null)) })) },
+    options: barOptions(false, "newest run's share"),
+  });
+  drawBetaRuns(hours);
+}
+
+// The table under Beta's Snow Summary: its snow against the Forecast tab's for the next storm, the
+// next 5 days, days 5–10 and 10–15, and the next 7, 15 and 16 days, all counted from the current hour. The next storm is the first
+// run of back-to-back days, from today on, with at least 0.05" a day in either version (the Snow
+// Summary's rule), so both are compared over the same days; for a storm under way, only what is
+// still to come counts.
+function drawBetaCompare(rows, betaSnow) {
+  const mainSnow = averageSnow(rows).snow;
+  const daily = vals => {
+    const m = new Map();
+    rows.forEach((r, i) => { const k = r.time.slice(0, 10); m.set(k, (m.get(k) || 0) + (vals[i] || 0)); });
+    return m;
+  };
+  const dMain = daily(mainSnow), dBeta = daily(betaSnow);
+  const days = [...dMain.keys()];
+  let from = -1, to = -1;
+  for (let i = 0; i < days.length; i++) {
+    const wet = Math.max(dMain.get(days[i]), dBeta.get(days[i])) >= 0.05;
+    if (wet && from < 0) from = i;
+    if (!wet && from >= 0) break;
+    if (wet) to = i;
+  }
+  const md = k => `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}`;
+  const total = (vals, keep) => rows.reduce((a, r, i) => a + (keep(r, i) ? vals[i] || 0 : 0), 0);
+  const periods = [];
+  if (from >= 0) {
+    const inStorm = r => r.time.slice(0, 10) >= days[from] && r.time.slice(0, 10) <= days[to];
+    periods.push({ label: `Next storm, ${from === to ? md(days[from]) : `${md(days[from])}–${md(days[to])}`}`, keep: inStorm });
+  } else {
+    periods.push({ label: "Next storm", none: true });
+  }
+  // Hours from now: day 5 ends 120 h ahead, day 10 at 240 h, day 15 at 360 h
+  const span = (a, b) => (r, i) => i >= a * 24 && i < b * 24;
+  periods.push(
+    { label: "Next 5 days", keep: span(0, 5) },
+    { label: "Days 5–10", keep: span(5, 10) },
+    { label: "Days 10–15", keep: span(10, 15) },
+    { label: "Next 7 days", keep: span(0, 7) },
+    { label: "Next 15 days", keep: span(0, 15) },
+    { label: "Next 16 days", keep: () => true },
+  );
+
+  const table = document.getElementById("beta-compare");
+  table.querySelector("thead").innerHTML = "<tr><th>Period</th><th>Forecast tab</th><th>Beta</th><th>Difference</th></tr>";
+  table.querySelector("tbody").innerHTML = periods.map(p => {
+    if (p.none) return `<tr><td>${p.label}</td><td colspan="3" class="muted">No snow in the next 16 days in either version</td></tr>`;
+    const a = total(mainSnow, p.keep), b = total(betaSnow, p.keep), d = b - a;
+    const pct = a >= 0.1 ? ` (${d >= 0 ? "+" : ""}${Math.round(d / a * 100)}%)` : "";
+    return `<tr><td>${p.label}</td><td>${r1(a)}"</td><td><b>${r1(b)}"</b></td>
+      <td class="${Math.abs(d) < 0.05 ? "muted" : d > 0 ? "beta-more" : "beta-less"}">${d >= 0 ? "+" : "−"}${r1(Math.abs(d))}"${pct}</td></tr>`;
+  }).join("");
+  document.getElementById("beta-compare-note").textContent =
+    "Difference is Beta minus the Forecast tab. Both use the same hourly snow ratios, so the difference comes only from how much snow water the blended runs forecast.";
+}
+
+// The timeline of runs: each run in use at about the time it became available (filled, larger for
+// more weight a day ahead), and the next runs expected in the coming day (hollow), with a line at now.
+function drawBetaRuns(hours) {
+  const H = 3600000, now = Date.now();
+  const when = ms => new Date(ms).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const runLabel = (m, init) => `${m.name} ${new Date(init).toISOString().slice(11, 13)}Z (starts ${when(init)})`;
+  // A run's weight within its model at a few lead times, from the blend itself
+  const LEADS = [[12, "12 h"], [60, "2.5 days"], [156, "6.5 days"], [324, "13.5 days"]];
+  const weightAt = (run, lead) => {
+    const p = hours[lead]?.parts.find(x => x.weights.some(w => w.run === run));
+    return p ? p.weights.find(w => w.run === run).w : null;
+  };
+  const used = betaData.runs.map(run => ({ run, at: run.init + run.model.delay * H, w24: weightAt(run, 24) ?? weightAt(run, 60) ?? 0 }));
+  const expected = [];
+  BETA_MODELS.forEach(m => {
+    const last = Math.max(...betaData.runs.filter(r => r.model === m).map(r => r.init), now - m.back * H);
+    for (let init = last + m.every * H; init + m.delay * H <= now + 24 * H; init += m.every * H) {
+      if (init + m.delay * H >= now - H) expected.push({ m, init, at: init + m.delay * H });
+    }
+  });
+  const yOf = m => BETA_MODELS.indexOf(m);
+  const nowLine = {
+    id: "nowLine",
+    afterDatasetsDraw(chart) {
+      const { ctx: g, chartArea: a, scales: { x } } = chart;
+      const px = x.getPixelForValue(now);
+      g.save(); g.strokeStyle = "rgba(230,237,245,0.6)"; g.setLineDash([4, 4]);
+      g.beginPath(); g.moveTo(px, a.top); g.lineTo(px, a.bottom); g.stroke();
+      g.fillStyle = "#e6edf5"; g.font = "600 10px " + Chart.defaults.font.family; g.textAlign = "center";
+      g.fillText("NOW", px, a.top - 4); g.restore();
+    },
+  };
+  makeChart("chart-beta-runs", {
+    type: "scatter",
+    plugins: [nowLine],
+    data: { datasets: [
+      { label: "Runs in use", data: used.map(u => ({ x: u.at, y: yOf(u.run.model), u })),
+        backgroundColor: used.map(u => u.run.model.color), borderColor: used.map(u => u.run.model.color),
+        pointRadius: used.map(u => 4 + 8 * u.w24) },
+      { label: "Next runs expected", data: expected.map(e => ({ x: e.at, y: yOf(e.m), e })),
+        backgroundColor: "transparent", borderColor: expected.map(e => e.m.color), borderWidth: 2, pointRadius: 6 },
+    ] },
+    options: {
+      responsive: true, maintainAspectRatio: false, layout: { padding: { top: 14 } },
+      plugins: {
+        legend: { labels: { boxWidth: 12 } },
+        tooltip: { callbacks: { label: ctx => {
+          const d = ctx.raw;
+          if (d.u) return `${runLabel(d.u.run.model, d.u.run.init)} · available about ${when(d.x)} · ${Math.round(d.u.w24 * 100)}% of ${d.u.run.model.name}'s weight a day ahead`;
+          return `${runLabel(d.e.m, d.e.init)} · expected about ${when(d.x)}`;
+        } } },
+      },
+      scales: {
+        x: { type: "linear", min: now - 32 * H, max: now + 24 * H, grid: { color: "rgba(139,155,176,0.15)" },
+          ticks: { stepSize: 6 * H, maxRotation: 0, font: { size: 10 },
+            callback: v => new Date(v).toLocaleString([], { weekday: "short", hour: "numeric" }) } },
+        y: { min: -0.6, max: BETA_MODELS.length - 0.4, reverse: true, grid: { display: false },
+          ticks: { stepSize: 1, callback: v => BETA_MODELS[v]?.name ?? "" } },
+      },
+    },
+  });
+
+  // The same runs as a table, with each one's share of its model at several lead times
+  const table = document.getElementById("beta-runs");
+  table.querySelector("thead").innerHTML = `<tr><th>Run</th><th>Available about</th><th>Age</th>${LEADS.map(([, l]) => `<th>Weight ${l} ahead</th>`).join("")}</tr>`;
+  table.querySelector("tbody").innerHTML = [...used].sort((a, b) => yOf(a.run.model) - yOf(b.run.model) || b.run.init - a.run.init)
+    .map(u => `<tr><td>${runLabel(u.run.model, u.run.init)}</td><td>${when(u.at)}</td><td>${r0((now - u.run.init) / H)} h</td>
+      ${LEADS.map(([lead]) => { const w = weightAt(u.run, lead); return `<td>${w == null ? "–" : `${Math.round(w * 100)}%`}</td>`; }).join("")}</tr>`)
+    .join("") + expected.sort((a, b) => a.at - b.at).map(e => `<tr class="muted"><td>${runLabel(e.m, e.init)}</td><td>${when(e.at)} (expected)</td><td>–</td>${LEADS.map(() => "<td>–</td>").join("")}</tr>`).join("");
+}
+
 // ---------- Forecast Summaries (in the Locations menu) ----------
 // Every resort's Snow Summary on one page, the resort with the most forecast snow over the next
 // 16 days first. Each needs its own GFS forecast, model comparison and model record for its main
@@ -1405,6 +1708,7 @@ async function loadHistory(loc) {
   renderSummary();
   renderWater();
   if (allRows.length) renderCharts(allRows.slice(0, activeHours ?? allRows.length)); // the drifting roses use the history
+  if (betaData) drawBeta(); // its already-fallen bars come from the same record
 }
 function historyUrl(loc) {
   const day = offset => { const d = new Date(Date.now() + offset * 86400000); return d.toISOString().slice(0, 10); };
@@ -1565,10 +1869,11 @@ function renderSummary() {
 }
 // The same chart for any resort: `rows` is its GFS forecast from the current hour, `history` the
 // model's record, `series` its models (modelSeries); `id` names the chart's elements, as in dailyChart.
-function summaryChart({ id, rows, history, series }) {
+// `avg` ({ snow, swe }, one value per row) replaces the usual average of the models; the Beta tab uses it.
+function summaryChart({ id, rows, history, series, avg: given }) {
   if (!rows.length) return;
   const past = history.filter(r => r.time < rows[0].time); // everything before the current hour
-  const avg = averageSnow(rows, series ?? modelSeries(rows));
+  const avg = given ?? averageSnow(rows, series ?? modelSeries(rows));
   const ahead = avg.snow.map(v => v || 0), aheadSwe = avg.swe.map(v => v || 0);
 
   // Bucket every hour into its calendar day
@@ -3434,6 +3739,7 @@ const TAB_REFRESH = {
   },
   models: () => loadModels(locations),
   stations: () => loadStations(),
+  beta: () => loadBeta(),
 };
 document.getElementById("refresh").addEventListener("click", () => {
   const note = document.getElementById("refresh-note");
@@ -3442,7 +3748,7 @@ document.getElementById("refresh").addEventListener("click", () => {
     clearTimeout(note.timer);
     note.timer = setTimeout(() => { note.textContent = ""; }, 5000);
   };
-  const view = ["forecast", "metrics", "models", "stations", "cams", "guide", "info"]
+  const view = ["forecast", "beta", "metrics", "models", "stations", "cams", "guide", "info"]
     .find(v => !document.getElementById(`view-${v}`).hidden);
   if (view === "cams") { drawMountainCams(); say("Pictures reloaded."); return; }
   if (!TAB_REFRESH[view]) { say("Nothing on this tab to refresh."); return; }
@@ -3507,7 +3813,7 @@ document.addEventListener("click", e => menus.forEach(m => { if (!m.contains(e.t
 document.addEventListener("keydown", e => { if (e.key === "Escape") menus.forEach(m => { m.open = false; }); });
 document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener("click", () => {
   const view = btn.dataset.view;
-  for (const v of ["forecast", "metrics", "models", "stations", "cams", "guide", "info", "storms", "mountains", "cameras", "allstations", "map"]) document.getElementById(`view-${v}`).hidden = v !== view;
+  for (const v of ["forecast", "beta", "metrics", "models", "stations", "cams", "guide", "info", "storms", "mountains", "cameras", "allstations", "map"]) document.getElementById(`view-${v}`).hidden = v !== view;
   document.querySelectorAll(".tab[data-view]").forEach(b => {
     b.classList.toggle("active", b === btn);
     b.setAttribute("aria-pressed", b === btn);
@@ -3526,6 +3832,7 @@ document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener
   if (view === "mountains") renderMountainForecasts().catch(err => console.warn("Mountain forecasts unavailable", err));
   if (view === "allstations") renderAllStations().catch(err => console.warn("Weather stations unavailable", err));
   if (view === "stations") homeStationDetail(); // back from the Weather Stations page, if it was open there
+  if (view === "beta") showBeta();
   showCameras(view === "cameras");
   showMountainCams(view === "cams");
   showMap(view === "map");
@@ -3545,6 +3852,8 @@ document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener
 // The Cams tab is only there for a resort with cams listed in AREAS, and Weather Stations for one with stations
 if (!AREA.cams) document.querySelector('.tab[data-view="cams"]').remove();
 if (!AREA.stations.length) document.querySelector('.tabs[data-area-pages] .tab[data-view="stations"]').remove();
+// The Beta tab is on Alta's page only, for now
+if (POINT || AREA_KEY !== "alta") document.querySelector('.tab[data-view="beta"]').remove();
 
 // ---------- Back button ----------
 // The ← at the left of the header, on every page. Each step in the browser's history records in

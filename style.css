@@ -175,6 +175,9 @@ a { color: var(--accent); }
 .global-row { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
 body.global-mode .global-row { display: flex; }
 body.global-mode .loc-row, body.global-mode .tabs[data-area-pages], body.global-mode #updated { display: none; }
+/* Beta vs. Forecast tab table: more snow in Beta in blue, less in orange */
+td.beta-more { color: var(--snow); font-weight: 600; }
+td.beta-less { color: #f8a55f; font-weight: 600; }
 /* Map: the satellite map fills most of the screen; the window a click opens is in the page's colours */
 /* `isolation` keeps Leaflet's layers (z-index 400 and up) under the drop-down menus */
 .map { height: calc(100vh - 220px); min-height: 380px; border: 1px solid var(--border); border-radius: 12px; background: #0b1119; isolation: isolate; }

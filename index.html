@@ -80,6 +80,8 @@
       </div>
       <nav class="tabs" data-area-pages aria-label="Alta pages">
         <button type="button" class="tab active" data-view="forecast" aria-pressed="true">Forecast</button>
+        <!-- Alta only for now (app.js removes it elsewhere): the Snow Summary from recent model runs blended by age -->
+        <button type="button" class="tab" data-view="beta" aria-pressed="false">Beta</button>
         <button type="button" class="tab" data-view="metrics" aria-pressed="false">Backcountry Ski Metrics</button>
         <button type="button" class="tab" data-view="models" aria-pressed="false">Spaghettis</button>
         <button type="button" class="tab" data-view="stations" aria-pressed="false">Weather Stations</button>
@@ -244,6 +246,65 @@
    <!-- Weather Stations (from the Locations menu): every resort's stations, a table per resort -->
    <div id="view-allstations" hidden>
     <div id="all-stations"></div>
+   </div>
+
+   <!-- Beta tab (Alta only): a Snow Summary built from each model's recent runs, each run weighted by
+        its age, then the models averaged; below it, how the weights work out (Beta section in app.js) -->
+   <div id="view-beta" hidden>
+    <section class="card">
+      <h2>Snow Summary <span class="muted small">(Beta · each model's recent runs blended by age)</span></h2>
+      <p id="beta-status" class="muted small station-note">Loading the recent model runs…</p>
+      <div id="beta-scroll" class="summary-scroll" tabindex="0" aria-label="Beta snow summary chart, scrolls sideways">
+        <div id="beta-inner" class="chart-wrap summary"><canvas id="chart-beta"></canvas></div>
+      </div>
+      <!-- Same colours as the Snow Summary on the Forecast tab -->
+      <div class="line-key">
+        <span><i class="box" style="background:#8b9bb0"></i>Already fallen (model estimate)</span>
+        <span><i class="box" style="background:#9fd8ff"></i>Light snow, 14 to 1 or more</span>
+        <span><i class="box" style="background:#6cc3ff"></i>Average, 9 to 14 to 1</span>
+        <span><i class="box" style="background:#3f8cff"></i>Heavy, under 9 to 1</span>
+        <span><i class="box" style="background:#5fd3a3"></i>Rain</span>
+        <span><svg class="moon" viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 8.6A5 5 0 1 1 5.2 1a4 4 0 0 0 4.3 7.6z"/></svg>Fell at night</span>
+      </div>
+    </section>
+
+    <!-- Beta's snow against the Forecast tab's Snow Summary for the same periods (drawBetaCompare in app.js) -->
+    <section class="card">
+      <h2>Beta vs. the Forecast tab <span class="muted small">(forecast snow from now)</span></h2>
+      <div class="table-wrap">
+        <table id="beta-compare"><thead></thead><tbody></tbody></table>
+      </div>
+      <p id="beta-compare-note" class="muted small station-note"></p>
+    </section>
+
+    <section class="card">
+      <h2>Model weights by day <span class="muted small">(each model's share of the average)</span></h2>
+      <div class="chart-wrap"><canvas id="chart-beta-models"></canvas></div>
+    </section>
+
+    <section class="card">
+      <h2>Newest run's share by day <span class="muted small">(within each model; the rest goes to its earlier runs)</span></h2>
+      <div class="chart-wrap short"><canvas id="chart-beta-newest"></canvas></div>
+    </section>
+
+    <section class="card">
+      <h2>When new model data comes in <span class="muted small">(runs in use, and the next ones expected · Mountain time)</span></h2>
+      <div class="chart-wrap"><canvas id="chart-beta-runs"></canvas></div>
+      <div class="table-wrap">
+        <table id="beta-runs"><thead></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section class="card info">
+      <h2>How Beta works</h2>
+      <ul>
+        <li><b>Runs:</b> for each model, its runs from roughly the last day, from Open-Meteo's archive of single model runs. That archive keeps the GFS and NAM every 6 hours and the HRRR and NBM every 3 hours.</li>
+        <li><b>Within a model:</b> each run's weight halves for every few hours of age. The half-life is 3 hours for the first day ahead, rising to 5 hours by day 2 and 12 hours from day 5 on, so the near days follow the newest runs and the far days blend about a day of runs.</li>
+        <li><b>Across models:</b> GFS + HRRR (HRRR while its runs reach that hour, then GFS), NBM and NAM, the same three as the Forecast tab. In the first day the fresher model counts for more (its weight halves for every 6 hours its newest run is older), easing off to an even average by day 2.</li>
+        <li><b>Snow:</b> each run's snow water is turned into snow with the current GFS's hourly Kuchera ratio, as on the Forecast tab. The older runs' own upper-air temperatures are not in the archive.</li>
+        <li><b>Unchanged:</b> the already-fallen bars and the rain, which come from the same GFS record as the Forecast tab. The Snow Summary on the Forecast tab is not affected.</li>
+      </ul>
+    </section>
    </div>
 
    <!-- Forecast tab: all the forecast tiles and charts -->
