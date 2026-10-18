@@ -288,6 +288,19 @@
       </div>
     </section>
 
+    <!-- Snow ratio learned from the Collins board and gauge (drawRatio in app.js) -->
+    <section class="card">
+      <h2>Learned snow ratio <span class="muted small">(inches of snow per inch of water at Collins, against the Kuchera method)</span></h2>
+      <div id="ratio-summary" class="learn-summary"></div>
+      <div class="table-wrap">
+        <table id="ratio-bands"><thead></thead><tbody></tbody></table>
+      </div>
+      <h3 class="sub-head">Each snowy day: Kuchera's ratio vs. what Collins measured</h3>
+      <div class="chart-wrap short"><canvas id="chart-ratio-days"></canvas></div>
+      <h3 class="sub-head">The correction over time</h3>
+      <div class="chart-wrap short"><canvas id="chart-ratio-history"></canvas></div>
+    </section>
+
     <section class="card info">
       <h2>How the learning works</h2>
       <ul>
@@ -295,7 +308,9 @@
         <li><b>Once a day has passed</b>, every forecast made for it is checked against the snow the Collins board measured. Each forecast's snow water is turned into snow with the day's actual Kuchera ratios, the same for every version, so only the models and versions are being compared. Days when nothing was measured or forecast are not used.</li>
         <li><b>Learning:</b> for each range (day 1, 2, 3, 4–5, 6–7, 8–10, 11–16) and each version, it finds the weight for each model and an overall scale factor (0.5–2×) that best match what was measured. Recent days count for more (a day's weight halves every 90 days). With few storms the weights stay close to an even average and the scale close to 1.</li>
         <li><b>Fair scoring:</b> every approach, learned or not, is scored only on forecasts it would have made before seeing the outcome: on each day it is refitted on the days before. The recommended approach for a range is the one with the smallest typical miss, once that range has been checked against at least 4 different days with measured snow, so a single storm cannot decide it. Until then the Forecast tab's average is used, and the best approach so far is shown as leading.</li>
-        <li><b>The learned Snow Summary</b> uses each day's recommended approach on the model runs loaded for this tab, with the live GFS's hourly snow ratios.</li>
+        <li><b>Snow ratio:</b> each snowy day at Collins (at least 1" on the board, at least 0.1" of water in the gauge while it was 35 °F or colder, and little of the day's water falling warmer) shows the real ratio: board snow ÷ gauge water. Divided by the Kuchera ratio for the same hours, that gives a correction. The corrections are averaged by how cold it was (near freezing, 30 °F and up; cold, 20–30 °F; very cold, below 20 °F), recent days counting for more, and held near ×1 until a band has 3 days behind it. Gauges catch less snow than falls in wind, which makes measured ratios run high, so the corrections are limited to ×0.4–1.6.</li>
+        <li><b>The learned Snow Summary</b> uses each day's recommended approach on the model runs loaded for this tab, with the live GFS's hourly Kuchera ratios times the learned correction for that hour's forecast temperature at Collins.</li>
+        <li><b>Elevation:</b> every forecast here is for the Collins snow station itself (40.5763, −111.6383, 9,662 ft), and every model's temperatures are adjusted to that height. Whether the full elevation fix (rain or snow decided at Collins's height, more precipitation for the height) is used is one of the things the learning decides, range by range.</li>
       </ul>
     </section>
 

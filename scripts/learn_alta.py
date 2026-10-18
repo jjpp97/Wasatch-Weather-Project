@@ -55,6 +55,13 @@ MEMBER_NAMES = {"gfs": "GFS + HRRR", "nbm": "NBM", "nam": "NAM", "ecmwf": "ECMWF
 VARIANTS = {"split": "model's rain/snow split", "elev": "elevation fix"}
 BLENDS = {"newest": "newest runs", "blended": "recent runs blended"}
 HALF_LIFE = [(0, 3), (24, 3), (48, 5), (120, 12)]  # hours ahead -> hours of age that halve a run's weight
+FRESH = [(0, 1 / 6), (24, 1 / 6), (48, 0)]         # Beta's across-model freshness: halvings per hour of the newest run's age
+# The Snow Summaries on the Beta tab, also scored exactly as the page works them out (three models,
+# no ECMWF; the elevation-fix ones decide rain or snow from the wet-bulb averaged across models)
+EXACT = {"forecast_tab": "Forecast tab's Snow Summary", "beta": "Beta's Snow Summary",
+         "fc_elev": "Forecast tab + elevation fix Snow Summary", "beta_elev": "Beta + elevation fix Snow Summary"}
+EXACT_HOW = {"forecast_tab": ("split", "newest"), "beta": ("split", "blended"), "fc_elev": ("elev", "newest"), "beta_elev": ("elev", "blended")}
+PAGE_MEMBERS = ["gfs", "nbm", "nam"]
 LEAD_DAYS = 16
 BUCKETS = [("Day 1", 1, 1), ("Day 2", 2, 2), ("Day 3", 3, 3), ("Days 4–5", 4, 5),
            ("Days 6–7", 6, 7), ("Days 8–10", 8, 10), ("Days 11–16", 11, 16)]
@@ -148,7 +155,8 @@ def kuchera(temps_f):
 
 # ---------- One model run ----------
 def run_hours(key, init):
-    """{local hour: (split snow water, elevation-fix snow water)} for one archived run, or None."""
+    """{local hour: (split snow water, elevation-fix snow water, total water with the height factor,
+    wet-bulb °C at Collins)} for one archived run, or None."""
     m = MODELS[key]
     hourly = "precipitation,rain,showers,snowfall,temperature_2m,relative_humidity_2m"
     if m.get("upper"):
@@ -174,7 +182,7 @@ def run_hours(key, init):
         temp = site_temp(m["cell"], col("temperature_2m", i), col("temperature_700hPa", i), col("geopotential_height_700hPa", i))
         tw = wet_bulb(temp, col("relative_humidity_2m", i))
         elev = None if tw is None else p * qpf_factor(m["cell"]) * snow_share(tw)
-        out[t] = (split, elev)
+        out[t] = (split, elev, p * qpf_factor(m["cell"]), tw)
     return out or None
 
 
@@ -196,13 +204,17 @@ def runs_at(key, issue):
     return found
 
 
+def lerp(pts, x):
+    if x <= pts[0][0]:
+        return pts[0][1]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if x <= x1:
+            return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+    return pts[-1][1]
+
+
 def half_life(lead):
-    if lead <= HALF_LIFE[0][0]:
-        return HALF_LIFE[0][1]
-    for (x0, y0), (x1, y1) in zip(HALF_LIFE, HALF_LIFE[1:]):
-        if lead <= x1:
-            return y0 + (y1 - y0) * (lead - x0) / (x1 - x0)
-    return HALF_LIFE[-1][1]
+    return lerp(HALF_LIFE, lead)
 
 
 # ---------- Step 1: snapshot one issue time ----------
@@ -210,6 +222,9 @@ def snapshot(issue):
     """Every model's four versions, hour by hour, for the 16 days after `issue` (sparse: zeros left out)."""
     runs = {key: runs_at(key, issue) for key in MODELS}
     series = {mem: {v: {b: {} for b in BLENDS} for v in VARIANTS} for mem in MEMBERS}
+    # For scoring the Beta tab's own Snow Summaries: each model's total water (with the height
+    # factor) and wet-bulb temperature, newest and blended, and the age of its newest run
+    extra = {mem: {"wq": {b: {} for b in BLENDS}, "tw": {b: {} for b in BLENDS}, "age": {}} for mem in PAGE_MEMBERS}
     cover = {mem: [None, None] for mem in MEMBERS}
     for k in range(LEAD_DAYS * 24):
         t = local_hour(issue + dt.timedelta(hours=k))
@@ -222,19 +237,55 @@ def snapshot(issue):
                 hl = half_life(k)
                 w = [0.5 ** (a / hl) for a in ages]
                 newest = ages.index(min(ages))
-                for vi, v in enumerate(VARIANTS):
+                both = {}
+                for vi in range(4):  # split, elev, water with the height factor, wet-bulb
                     vals = [(val[vi], wi) for (_, val), wi in zip(have, w) if val[vi] is not None]
                     if not vals:
                         continue
-                    nv = have[newest][1][vi]
-                    blended = sum(x * wi for x, wi in vals) / sum(wi for _, wi in vals)
-                    for b, x in (("newest", nv), ("blended", blended)):
+                    both[vi] = (have[newest][1][vi], sum(x * wi for x, wi in vals) / sum(wi for _, wi in vals))
+                for vi, v in enumerate(VARIANTS):
+                    for b, x in zip(BLENDS, both.get(vi, (None, None))):
                         if x is not None and x > 0.0005:
                             series[mem][v][b][t] = round(x, 4)
+                if mem in extra:
+                    for b, x in zip(BLENDS, both.get(2, (None, None))):
+                        if x is not None and x > 0.0005:
+                            extra[mem]["wq"][b][t] = round(x, 4)
+                    for b, x in zip(BLENDS, both.get(3, (None, None))):
+                        if x is not None:
+                            extra[mem]["tw"][b][t] = round(x, 2)
+                    extra[mem]["age"][t] = round(min(ages), 1)
                 cover[mem] = [cover[mem][0] or t, t]
                 break
     return {"issue": issue.strftime("%Y-%m-%dT%H:%MZ"), "issue_local": local_hour(issue), "series": series,
-            "cover": cover, "done": []}
+            "extra": extra, "cover": cover, "done": []}
+
+
+def exact_hour(snap, t, lead):
+    """The Beta tab's four Snow Summaries' snow water for one hour, worked out as the page does."""
+    out = {}
+    present = [m for m in PAGE_MEMBERS if t in snap["extra"][m]["age"]]
+    if not present:
+        return {k: None for k in EXACT}
+    s, e = snap["series"], snap["extra"]
+    # Forecast tab: even average of the newest runs, the models' own split
+    out["forecast_tab"] = sum(s[m]["split"]["newest"].get(t, 0) for m in present) / len(present)
+    # Beta: blended runs, fresher models counting more in the first day
+    k = lerp(FRESH, lead)
+    f = {m: 0.5 ** (e[m]["age"][t] * k) for m in present}
+    F = sum(f.values())
+    out["beta"] = sum(s[m]["split"]["blended"].get(t, 0) * f[m] for m in present) / F
+    # The elevation-fix versions: average the water and the wet-bulb across models, then split
+    for key, b, wts in (("fc_elev", "newest", {m: 1.0 for m in present}), ("beta_elev", "blended", f)):
+        have = [m for m in present if t in e[m]["tw"][b]]
+        W = sum(wts[m] for m in have)
+        if not W:
+            out[key] = None
+            continue
+        water = sum(e[m]["wq"][b].get(t, 0) * wts[m] for m in have) / W
+        tw = sum(e[m]["tw"][b][t] * wts[m] for m in have) / W
+        out[key] = water * snow_share(tw)
+    return out
 
 
 # ---------- Step 2: what was measured ----------
@@ -306,11 +357,22 @@ def verify(state, truth, ratio):
                             continue
                         s = snap["series"][mem][v][b]
                         x[v][b][mem] = round(sum(s.get(t, 0) * ratio[t] for t in hours), 3)
+            # The Beta tab's own Snow Summaries, exactly as the page works them out
+            exact = {k: 0.0 for k in EXACT}
+            if "extra" in snap:
+                start = dt.datetime.strptime(snap["issue_local"], "%Y-%m-%dT%H:%M")
+                for t in hours:
+                    lead = (dt.datetime.strptime(t, "%Y-%m-%dT%H:%M") - start).total_seconds() / 3600
+                    for k, v in exact_hour(snap, t, lead).items():
+                        exact[k] = None if v is None or exact[k] is None else exact[k] + v * ratio[t]
+                exact = {k: (None if v is None else round(v, 3)) for k, v in exact.items()}
+            else:
+                exact = None
             y = round(truth[day]["snow"], 2)
             snap["done"].append(day)
             wet = y >= WET or any((val or 0) >= WET for v in x.values() for b in v.values() for val in b.values())
             if wet:
-                state["samples"].append({"issue": snap["issue"], "date": day, "lead": d + 1, "y": y, "x": x})
+                state["samples"].append({"issue": snap["issue"], "date": day, "lead": d + 1, "y": y, "x": x, "exact": exact})
                 added += 1
             else:
                 state["dry"] = state.get("dry", 0) + 1
@@ -392,7 +454,7 @@ def learn(samples):
         # Fixed approaches: the Forecast tab's average (first: everything is compared with it), an
         # even average of all four models, and each model alone
         forecast_tab = {m: (0.0 if m == "ecmwf" else 1 / 3) for m in MEMBERS}
-        fixed = [("Forecast tab's average · model's rain/snow split · newest runs", "split", "newest", forecast_tab)]
+        fixed = [(EXACT["forecast_tab"], "split", "newest", forecast_tab)]
         fixed += [(f"Even average of all four · {VARIANTS[v]} · {BLENDS[b]}", v, b, even) for v in VARIANTS for b in BLENDS]
         fixed += [(f"{MEMBER_NAMES[m]} alone · {VARIANTS[v]} · newest runs", v, "newest", {k: float(k == m) for k in MEMBERS})
                   for m in MEMBERS for v in VARIANTS]
@@ -401,6 +463,14 @@ def learn(samples):
                     if (p := predict(s["x"][v][b], w, 1.0)) is not None]
             cands.append({"label": label, "kind": "fixed", "variant": v, "blend": b, "weights": w, "scale": 1.0,
                           "n": len(errs), "mae": sum(e * r for e, r in errs) / sum(r for _, r in errs) if errs else None})
+        cands[0]["exact"] = "forecast_tab"  # the page can use its own Snow Summary for it
+        # The Beta tab's other Snow Summaries, exactly as the page works them out
+        for key in ("beta", "fc_elev", "beta_elev"):
+            errs = [(abs(s["exact"][key] - s["y"]), recency(s["date"], ref)) for s in bucket
+                    if s.get("exact") and s["exact"].get(key) is not None]
+            v, b = EXACT_HOW[key]
+            cands.append({"label": EXACT[key], "kind": "exact", "exact": key, "variant": v, "blend": b, "weights": forecast_tab,
+                          "scale": 1.0, "n": len(errs), "mae": sum(e * r for e, r in errs) / sum(r for _, r in errs) if errs else None})
         # Learned approaches: refitted each day on earlier days only, then once on everything
         for v in VARIANTS:
             for b in BLENDS:
@@ -431,6 +501,91 @@ def learn(samples):
                        "recommended": pick["label"], "leading": ranked[0]["label"] if ranked else None,
                        "enough": enough, "baseline_mae": baseline["mae"], "candidates": cands})
     return result
+
+
+# ---------- Snow ratio learning ----------
+# How many inches of snow an inch of water actually makes at Collins, against what the Kuchera
+# method says, by how cold it was. A day counts when the board gained at least 1" of snow, the
+# gauge caught at least 0.1" of water while it was 35 °F or colder, and no more than a quarter of
+# the day's water fell warmer than that (so it was not partly rain). Each day gives a correction,
+# measured ratio ÷ Kuchera's; a band's correction is their recency-weighted average (in log terms,
+# so ×2 and ×0.5 balance), held near ×1 until RATIO_PRIOR_DAYS days are behind it. Gauges catch
+# less snow than falls in wind, which makes measured ratios run high; the corrections are clamped
+# to ×0.4–1.6 for safety.
+RATIO_BANDS = [("Near freezing", 30, 99), ("Cold", 20, 30), ("Very cold", -99, 20)]  # °F at Collins, water-weighted
+RATIO_PRIOR_DAYS = 3
+RATIO_RECENCY_DAYS = 365
+SNOW_MAX_F = 35
+
+
+def ratio_days(truth):
+    """The days that can show Collins's real snow ratio, with Kuchera's for the same hours."""
+    col = json.loads(TRUTH.read_text(encoding="utf-8"))
+    ci = {c: i for i, c in enumerate(col["columns"])}
+    hours = {}
+    for r in col["rows"]:
+        water = r[ci["precip_1h"]]
+        if not water or water <= 0:
+            continue
+        utc = dt.datetime.strptime(r[0], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+        # The gauge's hour ends at the reading, so the water belongs to the hour before it
+        hours[local_hour(utc - dt.timedelta(hours=1))] = (water, r[ci["air_temp"]])
+    days = sorted(d for d, v in truth.items() if v["snow"] >= 1 and v["readings"] >= 18 and d < today_local())
+    if not days:
+        return []
+    kr = ratios(days[0], days[-1])
+    out = []
+    for d in days:
+        day_hours = [(t, w, temp) for t, (w, temp) in hours.items() if t[:10] == d]
+        cold = [(t, w, temp) for t, w, temp in day_hours if temp is not None and temp <= SNOW_MAX_F]
+        cold_w = sum(w for _, w, _ in cold)
+        all_w = sum(w for _, w, _ in day_hours)
+        if cold_w < 0.1 or (all_w - cold_w) > 0.25 * all_w:
+            continue
+        with_k = [(t, w, temp) for t, w, temp in cold if t in kr]
+        if not with_k:
+            continue
+        kw = sum(w for _, w, _ in with_k)
+        kuch = sum(w * kr[t] for t, w, _ in with_k) / kw
+        temp = sum(w * temp for _, w, temp in cold) / cold_w
+        measured = truth[d]["snow"] / cold_w
+        out.append({"date": d, "snow": round(truth[d]["snow"], 1), "water": round(cold_w, 2), "temp_f": round(temp, 1),
+                    "kuchera": round(kuch, 1), "measured": round(measured, 1), "correction": round(measured / kuch, 3)})
+    return out
+
+
+def band_of(temp_f):
+    return next(name for name, lo, hi in RATIO_BANDS if lo <= temp_f < hi)
+
+
+def ratio_factor(days, ref):
+    """A band's correction from its days (recency weighted, in log terms), held near ×1 by RATIO_PRIOR_DAYS."""
+    wsum = sum(recency(d["date"], ref) for d in days)
+    if not days:
+        return 1.0
+    lsum = sum(recency(d["date"], ref) * math.log(d["correction"]) for d in days)
+    return min(1.6, max(0.4, math.exp(lsum / (wsum + RATIO_PRIOR_DAYS))))
+
+
+def learn_ratio(days):
+    """Each band's correction now, and how well it would have done: each day's snow worked out from
+    its gauge water with plain Kuchera and with the correction learned from earlier days only."""
+    ref = today_local()
+    bands = []
+    for name, lo, hi in RATIO_BANDS:
+        mine = [d for d in days if band_of(d["temp_f"]) == name]
+        errs_k, errs_l = [], []
+        for i, d in enumerate(mine):
+            f = ratio_factor(mine[:i], d["date"])
+            r = recency(d["date"], ref)
+            errs_k.append((abs(d["water"] * d["kuchera"] - d["snow"]), r))
+            errs_l.append((abs(d["water"] * d["kuchera"] * f - d["snow"]), r))
+        avg = lambda errs: round(sum(e * r for e, r in errs) / sum(r for _, r in errs), 2) if errs else None
+        bands.append({"name": name, "from_f": lo, "to_f": hi, "factor": round(ratio_factor(mine, ref), 3), "days": len(mine),
+                      "kuchera_avg": round(sum(d["kuchera"] for d in mine) / len(mine), 1) if mine else None,
+                      "measured_avg": round(sum(d["measured"] for d in mine) / len(mine), 1) if mine else None,
+                      "miss_kuchera": avg(errs_k), "miss_learned": avg(errs_l)})
+    return {"bands": bands, "days": days[-60:], "prior_days": RATIO_PRIOR_DAYS, "snow_max_f": SNOW_MAX_F}
 
 
 # ---------- Run ----------
@@ -468,12 +623,14 @@ def main():
 
     # 3. Learn, and 4. write what the page shows
     buckets = learn(state["samples"])
+    snow_ratio = learn_ratio(ratio_days(truth))
+    print("snow ratio corrections: " + ", ".join(f"{b['name']} x{b['factor']} ({b['days']} days)" for b in snow_ratio["bands"]))
     old = json.loads(OUT.read_text(encoding="utf-8")) if OUT.exists() else {}
     history = [h for h in old.get("history", []) if h["date"] != today_local()]
     history.append({"date": today_local(), "buckets": {
-        b["name"]: next({k: c[k] for k in ("label", "variant", "blend", "weights", "scale", "mae", "n")}
+        b["name"]: next({k: c.get(k) for k in ("label", "variant", "blend", "weights", "scale", "mae", "n", "exact")}
                         for c in b["candidates"] if c["label"] == b["recommended"]) | {"baseline_mae": b["baseline_mae"]}
-        for b in buckets}})
+        for b in buckets}, "ratio": {b["name"]: b["factor"] for b in snow_ratio["bands"]}})
     measured = {d: round(v["snow"], 1) for d, v in sorted(truth.items()) if v["readings"] >= 18 and d < today_local()}
     STATE.write_text(json.dumps(state, separators=(",", ":")) + "\n", encoding="utf-8")
     OUT.write_text(json.dumps({
@@ -490,6 +647,7 @@ def main():
         "samples": len(state["samples"]),
         "storm_days": sum(1 for v in measured.values() if v >= WET),
         "buckets": buckets,
+        "ratio": snow_ratio,
         "history": history,
         "measured": dict(list(measured.items())[-60:]),
     }, indent=1) + "\n", encoding="utf-8")

@@ -1325,11 +1325,18 @@ function drawBeta() {
   const counts = BETA_MODELS.map(m => `${m.name} ${betaData.runs.filter(r => r.model === m).length}`).join(", ");
   status.textContent = `Runs in use: ${counts}. Loaded ${new Date(betaData.fetchedAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}.`;
 
-  drawLearning(rows, betaData.runs, betaData.learning);
-  summaryChart({ id: "beta", rows, history: snowHistory, avg: { snow: hours.map(h => h.snow), swe: hours.map(h => h.swe) } });
   // The two versions with the elevation fix; their rain is the part of the water the fix makes rain
   const fcFix = elevNewest(rows, betaData.live);
   const asAvg = list => ({ snow: list.map(x => x.snow), swe: list.map(x => x.swe), rain: list.map(x => x.rain) });
+  // The learning can recommend any of the four Snow Summaries on this tab for a range of days
+  const main = averageSnow(rows);
+  drawLearning(rows, betaData.runs, betaData.learning, {
+    forecast_tab: { snow: main.snow, swe: main.swe },
+    beta: { snow: hours.map(h => h.snow), swe: hours.map(h => h.swe) },
+    fc_elev: asAvg(fcFix),
+    beta_elev: asAvg(hours.map(h => h.fix)),
+  });
+  summaryChart({ id: "beta", rows, history: snowHistory, avg: { snow: hours.map(h => h.snow), swe: hours.map(h => h.swe) } });
   summaryChart({ id: "betafc-elev", rows, history: snowHistory, avg: asAvg(fcFix) });
   summaryChart({ id: "beta-elev", rows, history: snowHistory, avg: asAvg(hours.map(h => h.fix)) });
 
@@ -1394,7 +1401,7 @@ const LEARN_MEMBERS = { gfs: ["hrrr", "gfs"], nbm: ["nbm"], nam: ["nam"], ecmwf:
 const LEARN_NAMES = { gfs: "GFS + HRRR", nbm: "NBM", nam: "NAM", ecmwf: "ECMWF" };
 const LEARN_COLORS = { gfs: "#ff8a5c", nbm: "#ffd166", nam: "#6cc3ff", ecmwf: "#ff6fae" };
 // Used for a range until it has enough storms behind it: the Forecast tab's own average
-const EVEN_APPROACH = { label: "Forecast tab's average · model's rain/snow split · newest runs", variant: "split", blend: "newest",
+const EVEN_APPROACH = { label: "Forecast tab's Snow Summary", variant: "split", blend: "newest", exact: "forecast_tab",
   weights: { gfs: 1 / 3, nbm: 1 / 3, nam: 1 / 3, ecmwf: 0 }, scale: 1 };
 let learnRange = 0; // the range picked under "What the learning has found"
 
@@ -1425,27 +1432,32 @@ function learnApproach(learning, day) {
   return { bucket, approach: cand ?? EVEN_APPROACH };
 }
 
-function drawLearning(rows, runs, learning) {
+// `exact` holds this tab's four Snow Summaries ({ snow, swe } per row), used as they are when the
+// approach recommended for a day is one of them
+function drawLearning(rows, runs, learning, exact = {}) {
   const today = rows[0].time.slice(0, 10);
   const dayOf = t => Math.round((new Date(t.slice(0, 10) + "T12:00") - new Date(today + "T12:00")) / 86400000) + 1;
   const pct = v => `${Math.round(v * 100)}%`;
   const when = iso => new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-  // The learned Snow Summary: each hour's day picks its approach. Each model's own snow, in that
-  // version, is kept too for the snowfall-by-model chart.
+  // The learned Snow Summary: each hour's day picks its approach, and the snow ratio is Kuchera's
+  // times the learned correction for that hour's forecast temperature. Each model's own snow, in
+  // that version, is kept too for the snowfall-by-model chart.
   const snow = [], swe = [];
   const byModel = Object.fromEntries(Object.keys(LEARN_MEMBERS).map(m => [m, []]));
   rows.forEach((r, i) => {
     const { approach: a } = learnApproach(learning, dayOf(r.time));
+    const ratio = r.kuchera * ratioCorrection(learning, r.temp);
     let s = 0, w = 0;
     for (const [m, pools] of Object.entries(LEARN_MEMBERS)) {
       const v = learnMemberValue(runs, pools, r.time, i, a.variant, a.blend);
-      byModel[m].push(v == null ? null : v * r.kuchera);
+      byModel[m].push(v == null ? null : v * ratio);
       if (v == null || !(a.weights[m] > 0)) continue;
       s += a.weights[m] * v; w += a.weights[m];
     }
-    const water = w ? (s / w) * a.scale : null;
-    swe.push(water); snow.push(water == null ? null : water * r.kuchera);
+    const own = a.exact && exact[a.exact];
+    const water = own ? own.swe[i] : w ? (s / w) * a.scale : null;
+    swe.push(water); snow.push(water == null ? null : water * ratio);
   });
   summaryChart({ id: "learned", rows, history: snowHistory, avg: { snow, swe } });
 
@@ -1517,6 +1529,64 @@ function drawLearning(rows, runs, learning) {
   }).join("");
 
   drawLearningHistory(learning);
+  drawRatio(learning);
+}
+
+// The learned snow ratio correction for a forecast temperature (°F) at Collins; ×1 before any learning
+function ratioCorrection(learning, tempF) {
+  const bands = learning?.ratio?.bands;
+  if (!bands || tempF == null) return 1;
+  const b = bands.find(x => tempF >= x.from_f && tempF < x.to_f);
+  return b?.factor ?? 1;
+}
+
+// The Learned snow ratio card: each temperature band's correction, each snowy day's real ratio
+// against Kuchera's, and the corrections day by day
+function drawRatio(learning) {
+  const r = learning?.ratio;
+  const summary = document.getElementById("ratio-summary");
+  const table = document.getElementById("ratio-bands");
+  if (!r) {
+    summary.innerHTML = '<p class="muted">The daily learning job has not worked out a snow ratio yet, so plain Kuchera ratios are used.</p>';
+    table.querySelector("thead").innerHTML = table.querySelector("tbody").innerHTML = "";
+    return;
+  }
+  const range = b => b.from_f <= -50 ? `below ${b.to_f} °F` : b.to_f >= 50 ? `${b.from_f} °F and up` : `${b.from_f}–${b.to_f} °F`;
+  const learned = r.bands.filter(b => b.days);
+  summary.innerHTML = `<p>${r.days.length} snowy day${r.days.length === 1 ? "" : "s"} at Collins so far could show the real snow ratio. ` +
+    (learned.length ? learned.map(b => `<b>${b.name}</b> (${range(b)}): Kuchera averaged ${b.kuchera_avg}:1, Collins measured ${b.measured_avg}:1, ` +
+      `so the learned Snow Summary uses Kuchera ×${b.factor.toFixed(2)}${b.days < r.prior_days ? " for now (held near ×1 until more days)" : ""}.`).join(" ")
+      : "None yet, so plain Kuchera ratios are used.") + "</p>";
+  table.querySelector("thead").innerHTML = "<tr><th>Temperature</th><th>Correction</th><th>Days</th><th>Kuchera avg</th><th>Measured avg</th><th>Snow miss, Kuchera</th><th>Snow miss, learned</th></tr>";
+  table.querySelector("tbody").innerHTML = r.bands.map(b => `<tr${b.days ? "" : ' class="muted"'}>
+      <td>${b.name} (${range(b)})</td><td>×${b.factor.toFixed(2)}</td><td>${b.days}</td>
+      <td>${b.kuchera_avg != null ? `${b.kuchera_avg}:1` : "–"}</td><td>${b.measured_avg != null ? `${b.measured_avg}:1` : "–"}</td>
+      <td>${b.miss_kuchera != null ? `${r1(b.miss_kuchera)}"` : "–"}</td><td>${b.miss_learned != null ? `${r1(b.miss_learned)}"` : "–"}</td></tr>`).join("");
+
+  const md = d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+  const opts = (yTitle, tick) => ({
+    responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+    plugins: { legend: { labels: { boxWidth: 12 } } },
+    scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, font: { size: 10 } } },
+      y: { beginAtZero: true, position: "right", title: { display: true, text: yTitle }, ticks: { callback: tick } } },
+  });
+  makeChart("chart-ratio-days", {
+    type: "bar",
+    data: { labels: r.days.map(d => [md(d.date), `${Math.round(d.temp_f)}°F`]), datasets: [
+      { label: "Kuchera", data: r.days.map(d => d.kuchera), backgroundColor: "#8b9bb0" },
+      { label: "Measured at Collins", data: r.days.map(d => d.measured), backgroundColor: "#9fd8ff" },
+    ] },
+    options: opts("inches of snow per inch of water", v => `${v}:1`),
+  });
+  const history = (learning.history ?? []).filter(h => h.ratio);
+  const colors = ["#ff7a5c", "#9fd8ff", "#c9a6ff"];
+  makeChart("chart-ratio-history", {
+    type: "line",
+    data: { labels: history.map(h => md(h.date)), datasets: r.bands.map((b, i) => ({
+      label: b.name, data: history.map(h => h.ratio[b.name] ?? null), borderColor: colors[i % 3], backgroundColor: colors[i % 3],
+      borderWidth: 2, pointRadius: 3 })) },
+    options: opts("correction to Kuchera", v => `×${v}`),
+  });
 }
 
 // Over time, for the range picked: the weights recommended each day, and the recommended approach's
