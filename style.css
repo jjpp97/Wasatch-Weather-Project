@@ -175,9 +175,19 @@ a { color: var(--accent); }
 .global-row { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
 body.global-mode .global-row { display: flex; }
 body.global-mode .loc-row, body.global-mode .tabs[data-area-pages], body.global-mode #updated { display: none; }
-/* Beta vs. Forecast tab table: more snow in Beta in blue, less in orange */
-td.beta-more { color: var(--snow); font-weight: 600; }
-td.beta-less { color: #f8a55f; font-weight: 600; }
+/* Learning section on the Beta tab */
+.learn-summary { display: grid; gap: 8px; margin-bottom: 12px; }
+.learn-summary p, .learn-summary ul { margin: 0; }
+.learn-summary ul { padding-left: 1.1em; display: grid; gap: 4px; }
+.card h3.sub-head { font-size: 0.85rem; font-weight: 600; color: var(--muted); margin: 16px 0 6px; }
+tr.learn-pick td { background: rgba(108, 195, 255, 0.12); }
+tr.learn-pick td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+/* Snow Summary comparison on the Beta tab: each total with its difference from the Forecast tab
+   under it, more snow in blue and less in orange */
+#beta-compare .diff { display: block; font-size: 0.75rem; font-weight: 600; }
+#beta-compare .diff.muted { font-weight: 400; }
+.beta-more { color: var(--snow); }
+.beta-less { color: #f8a55f; }
 /* Map: the satellite map fills most of the screen; the window a click opens is in the page's colours */
 /* `isolation` keeps Leaflet's layers (z-index 400 and up) under the drop-down menus */
 .map { height: calc(100vh - 220px); min-height: 380px; border: 1px solid var(--border); border-radius: 12px; background: #0b1119; isolation: isolate; }

@@ -1,0 +1,2071 @@
+{
+ "updated": "2026-10-18T03:21:00Z",
+ "site": {
+  "name": "Alta \u00b7 Mid-Collins",
+  "lat": 40.5763,
+  "lon": -111.6383,
+  "elev_m": 2945.0,
+  "tz": "America/Denver"
+ },
+ "members": {
+  "gfs": "GFS + HRRR",
+  "nbm": "NBM",
+  "nam": "NAM",
+  "ecmwf": "ECMWF"
+ },
+ "variants": {
+  "split": "model's rain/snow split",
+  "elev": "elevation fix"
+ },
+ "blends": {
+  "newest": "newest runs",
+  "blended": "recent runs blended"
+ },
+ "settings": {
+  "recency_days": 90,
+  "prior_samples": 6,
+  "min_samples": 6,
+  "min_snow_days": 4,
+  "wet_inches": 0.1,
+  "elev_qpf_per_1000ft": 0.08,
+  "half_life": [
+   [
+    0,
+    3
+   ],
+   [
+    24,
+    3
+   ],
+   [
+    48,
+    5
+   ],
+   [
+    120,
+    12
+   ]
+  ]
+ },
+ "measured_days": 11,
+ "first_measured": "2026-10-06",
+ "samples": 69,
+ "storm_days": 3,
+ "buckets": [
+  {
+   "name": "Day 1",
+   "days": [
+    1,
+    1
+   ],
+   "samples": 4,
+   "snow_days": 3,
+   "recommended": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+   "leading": "NBM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+   "enough": false,
+   "baseline_mae": 1.4,
+   "candidates": [
+    {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 1.4
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 1.67
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 1.39
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 1.7
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 1.51
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 1.96
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 2.05
+    },
+    {
+     "label": "NBM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 1.06
+    },
+    {
+     "label": "NBM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 2.49
+    },
+    {
+     "label": "NAM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 1.18
+    },
+    {
+     "label": "NAM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 1.36
+    },
+    {
+     "label": "ECMWF alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 2.49
+    },
+    {
+     "label": "ECMWF alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 4,
+     "mae": 1.69
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.241,
+      "nbm": 0.267,
+      "nam": 0.282,
+      "ecmwf": 0.21
+     },
+     "scale": 1.256,
+     "n": 4,
+     "mae": 1.53
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.258,
+      "nbm": 0.265,
+      "nam": 0.262,
+      "ecmwf": 0.216
+     },
+     "scale": 1.215,
+     "n": 4,
+     "mae": 1.32
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.231,
+      "nbm": 0.204,
+      "nam": 0.298,
+      "ecmwf": 0.267
+     },
+     "scale": 1.215,
+     "n": 4,
+     "mae": 1.59
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.256,
+      "nbm": 0.205,
+      "nam": 0.288,
+      "ecmwf": 0.252
+     },
+     "scale": 1.218,
+     "n": 4,
+     "mae": 1.43
+    }
+   ]
+  },
+  {
+   "name": "Day 2",
+   "days": [
+    2,
+    2
+   ],
+   "samples": 5,
+   "snow_days": 3,
+   "recommended": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+   "leading": "GFS + HRRR alone \u00b7 model's rain/snow split \u00b7 newest runs",
+   "enough": false,
+   "baseline_mae": 1.26,
+   "candidates": [
+    {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.26
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.32
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.35
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.43
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.54
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.04
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.83
+    },
+    {
+     "label": "NBM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 2.75
+    },
+    {
+     "label": "NBM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 2.37
+    },
+    {
+     "label": "NAM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.54
+    },
+    {
+     "label": "NAM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.05
+    },
+    {
+     "label": "ECMWF alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.92
+    },
+    {
+     "label": "ECMWF alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 1.52
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.321,
+      "nbm": 0.203,
+      "nam": 0.271,
+      "ecmwf": 0.206
+     },
+     "scale": 1.099,
+     "n": 5,
+     "mae": 1.74
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.307,
+      "nbm": 0.193,
+      "nam": 0.288,
+      "ecmwf": 0.212
+     },
+     "scale": 1.031,
+     "n": 5,
+     "mae": 1.83
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.237,
+      "nbm": 0.202,
+      "nam": 0.316,
+      "ecmwf": 0.245
+     },
+     "scale": 1.075,
+     "n": 5,
+     "mae": 1.61
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.238,
+      "nbm": 0.19,
+      "nam": 0.327,
+      "ecmwf": 0.245
+     },
+     "scale": 0.994,
+     "n": 5,
+     "mae": 1.84
+    }
+   ]
+  },
+  {
+   "name": "Day 3",
+   "days": [
+    3,
+    3
+   ],
+   "samples": 3,
+   "snow_days": 3,
+   "recommended": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+   "leading": "NAM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+   "enough": false,
+   "baseline_mae": 2.04,
+   "candidates": [
+    {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 2.04
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 1.98
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 2.16
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 2.72
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 3.14
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 3.3
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 3.16
+    },
+    {
+     "label": "NBM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 4.35
+    },
+    {
+     "label": "NBM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 5.31
+    },
+    {
+     "label": "NAM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 1.84
+    },
+    {
+     "label": "NAM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 2.69
+    },
+    {
+     "label": "ECMWF alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 2.83
+    },
+    {
+     "label": "ECMWF alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 3,
+     "mae": 2.36
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.226,
+      "nbm": 0.218,
+      "nam": 0.334,
+      "ecmwf": 0.222
+     },
+     "scale": 1.086,
+     "n": 3,
+     "mae": 2.48
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.226,
+      "nbm": 0.208,
+      "nam": 0.341,
+      "ecmwf": 0.225
+     },
+     "scale": 1.073,
+     "n": 3,
+     "mae": 2.58
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.262,
+      "nbm": 0.179,
+      "nam": 0.323,
+      "ecmwf": 0.236
+     },
+     "scale": 0.956,
+     "n": 3,
+     "mae": 3.18
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.244,
+      "nbm": 0.184,
+      "nam": 0.329,
+      "ecmwf": 0.243
+     },
+     "scale": 0.893,
+     "n": 3,
+     "mae": 3.56
+    }
+   ]
+  },
+  {
+   "name": "Days 4\u20135",
+   "days": [
+    4,
+    5
+   ],
+   "samples": 8,
+   "snow_days": 3,
+   "recommended": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+   "leading": "Even average of all four \u00b7 model's rain/snow split \u00b7 newest runs",
+   "enough": false,
+   "baseline_mae": 2.42,
+   "candidates": [
+    {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 2.42
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 2.4
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 2.62
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.25
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.16
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 2.86
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.94
+    },
+    {
+     "label": "NBM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 2.65
+    },
+    {
+     "label": "NBM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.3
+    },
+    {
+     "label": "NAM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 0,
+     "mae": null
+    },
+    {
+     "label": "NAM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 0,
+     "mae": null
+    },
+    {
+     "label": "ECMWF alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 2.92
+    },
+    {
+     "label": "ECMWF alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.12
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.234,
+      "nbm": 0.272,
+      "nam": 0.251,
+      "ecmwf": 0.242
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 2.47
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.239,
+      "nbm": 0.259,
+      "nam": 0.25,
+      "ecmwf": 0.252
+     },
+     "scale": 0.997,
+     "n": 8,
+     "mae": 2.71
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.208,
+      "nbm": 0.269,
+      "nam": 0.252,
+      "ecmwf": 0.27
+     },
+     "scale": 0.712,
+     "n": 8,
+     "mae": 3.09
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.235,
+      "nbm": 0.237,
+      "nam": 0.251,
+      "ecmwf": 0.276
+     },
+     "scale": 0.742,
+     "n": 8,
+     "mae": 2.99
+    }
+   ]
+  },
+  {
+   "name": "Days 6\u20137",
+   "days": [
+    6,
+    7
+   ],
+   "samples": 8,
+   "snow_days": 3,
+   "recommended": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+   "leading": "NBM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+   "enough": false,
+   "baseline_mae": 3.85,
+   "candidates": [
+    {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.85
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.9
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.64
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 4.39
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 4.03
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 4.99
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 6.38
+    },
+    {
+     "label": "NBM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.21
+    },
+    {
+     "label": "NBM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.76
+    },
+    {
+     "label": "NAM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 0,
+     "mae": null
+    },
+    {
+     "label": "NAM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 0,
+     "mae": null
+    },
+    {
+     "label": "ECMWF alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 4.21
+    },
+    {
+     "label": "ECMWF alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 8,
+     "mae": 3.8
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.123,
+      "nbm": 0.371,
+      "nam": 0.283,
+      "ecmwf": 0.224
+     },
+     "scale": 0.875,
+     "n": 8,
+     "mae": 3.95
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.209,
+      "nbm": 0.328,
+      "nam": 0.26,
+      "ecmwf": 0.202
+     },
+     "scale": 0.958,
+     "n": 8,
+     "mae": 3.73
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.011,
+      "nbm": 0.324,
+      "nam": 0.326,
+      "ecmwf": 0.338
+     },
+     "scale": 0.858,
+     "n": 8,
+     "mae": 4.51
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.18,
+      "nbm": 0.298,
+      "nam": 0.258,
+      "ecmwf": 0.264
+     },
+     "scale": 0.758,
+     "n": 8,
+     "mae": 4.25
+    }
+   ]
+  },
+  {
+   "name": "Days 8\u201310",
+   "days": [
+    8,
+    10
+   ],
+   "samples": 15,
+   "snow_days": 3,
+   "recommended": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+   "leading": "Even average of all four \u00b7 elevation fix \u00b7 recent runs blended",
+   "enough": false,
+   "baseline_mae": 2.73,
+   "candidates": [
+    {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 2.73
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 2.75
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 2.49
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 2.82
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 2.33
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 3.07
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 3.28
+    },
+    {
+     "label": "NBM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 2.39
+    },
+    {
+     "label": "NBM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 2.77
+    },
+    {
+     "label": "NAM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 0,
+     "mae": null
+    },
+    {
+     "label": "NAM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 0,
+     "mae": null
+    },
+    {
+     "label": "ECMWF alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 3.07
+    },
+    {
+     "label": "ECMWF alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 15,
+     "mae": 3.24
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.169,
+      "nbm": 0.362,
+      "nam": 0.273,
+      "ecmwf": 0.196
+     },
+     "scale": 1.158,
+     "n": 15,
+     "mae": 2.77
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.197,
+      "nbm": 0.291,
+      "nam": 0.255,
+      "ecmwf": 0.257
+     },
+     "scale": 1.219,
+     "n": 15,
+     "mae": 2.54
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.211,
+      "nbm": 0.279,
+      "nam": 0.252,
+      "ecmwf": 0.257
+     },
+     "scale": 0.918,
+     "n": 15,
+     "mae": 2.86
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.222,
+      "nbm": 0.279,
+      "nam": 0.252,
+      "ecmwf": 0.247
+     },
+     "scale": 1.103,
+     "n": 15,
+     "mae": 2.61
+    }
+   ]
+  },
+  {
+   "name": "Days 11\u201316",
+   "days": [
+    11,
+    16
+   ],
+   "samples": 26,
+   "snow_days": 3,
+   "recommended": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+   "leading": "NBM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+   "enough": false,
+   "baseline_mae": 3.46,
+   "candidates": [
+    {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 26,
+     "mae": 3.46
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 26,
+     "mae": 3.42
+    },
+    {
+     "label": "Even average of all four \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 26,
+     "mae": 3.41
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 26,
+     "mae": 3.41
+    },
+    {
+     "label": "Even average of all four \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.25,
+      "nbm": 0.25,
+      "nam": 0.25,
+      "ecmwf": 0.25
+     },
+     "scale": 1.0,
+     "n": 26,
+     "mae": 3.36
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 26,
+     "mae": 3.48
+    },
+    {
+     "label": "GFS + HRRR alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 1.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 26,
+     "mae": 3.5
+    },
+    {
+     "label": "NBM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 2.71
+    },
+    {
+     "label": "NBM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 1.0,
+      "nam": 0.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 5,
+     "mae": 2.78
+    },
+    {
+     "label": "NAM alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 0,
+     "mae": null
+    },
+    {
+     "label": "NAM alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 1.0,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "n": 0,
+     "mae": null
+    },
+    {
+     "label": "ECMWF alone \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 23,
+     "mae": 3.18
+    },
+    {
+     "label": "ECMWF alone \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "fixed",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.0,
+      "nbm": 0.0,
+      "nam": 0.0,
+      "ecmwf": 1.0
+     },
+     "scale": 1.0,
+     "n": 23,
+     "mae": 3.28
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.231,
+      "nbm": 0.251,
+      "nam": 0.251,
+      "ecmwf": 0.267
+     },
+     "scale": 1.048,
+     "n": 26,
+     "mae": 3.42
+    },
+    {
+     "label": "Learned weights \u00b7 model's rain/snow split \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "split",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.228,
+      "nbm": 0.242,
+      "nam": 0.251,
+      "ecmwf": 0.278
+     },
+     "scale": 1.06,
+     "n": 26,
+     "mae": 3.41
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 newest runs",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.242,
+      "nbm": 0.242,
+      "nam": 0.25,
+      "ecmwf": 0.265
+     },
+     "scale": 1.025,
+     "n": 26,
+     "mae": 3.42
+    },
+    {
+     "label": "Learned weights \u00b7 elevation fix \u00b7 recent runs blended",
+     "kind": "learned",
+     "variant": "elev",
+     "blend": "blended",
+     "weights": {
+      "gfs": 0.231,
+      "nbm": 0.227,
+      "nam": 0.252,
+      "ecmwf": 0.289
+     },
+     "scale": 1.07,
+     "n": 26,
+     "mae": 3.38
+    }
+   ]
+  }
+ ],
+ "history": [
+  {
+   "date": "2026-10-17",
+   "buckets": {
+    "Day 1": {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "mae": 1.4,
+     "n": 4,
+     "baseline_mae": 1.4
+    },
+    "Day 2": {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "mae": 1.26,
+     "n": 5,
+     "baseline_mae": 1.26
+    },
+    "Day 3": {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "mae": 2.04,
+     "n": 3,
+     "baseline_mae": 2.04
+    },
+    "Days 4\u20135": {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "mae": 2.42,
+     "n": 8,
+     "baseline_mae": 2.42
+    },
+    "Days 6\u20137": {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "mae": 3.85,
+     "n": 8,
+     "baseline_mae": 3.85
+    },
+    "Days 8\u201310": {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "mae": 2.73,
+     "n": 15,
+     "baseline_mae": 2.73
+    },
+    "Days 11\u201316": {
+     "label": "Forecast tab's average \u00b7 model's rain/snow split \u00b7 newest runs",
+     "variant": "split",
+     "blend": "newest",
+     "weights": {
+      "gfs": 0.3333333333333333,
+      "nbm": 0.3333333333333333,
+      "nam": 0.3333333333333333,
+      "ecmwf": 0.0
+     },
+     "scale": 1.0,
+     "mae": 3.46,
+     "n": 26,
+     "baseline_mae": 3.46
+    }
+   }
+  }
+ ],
+ "measured": {
+  "2026-10-06": 0.0,
+  "2026-10-07": 0.0,
+  "2026-10-08": 0.0,
+  "2026-10-09": 0.0,
+  "2026-10-10": 0.0,
+  "2026-10-11": 0.0,
+  "2026-10-12": 7.0,
+  "2026-10-13": 6.0,
+  "2026-10-14": 2.0,
+  "2026-10-15": 0.0,
+  "2026-10-16": 0.0
+ }
+}

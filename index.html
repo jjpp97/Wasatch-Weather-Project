@@ -251,6 +251,54 @@
    <!-- Beta tab (Alta only): a Snow Summary built from each model's recent runs, each run weighted by
         its age, then the models averaged; below it, how the weights work out (Beta section in app.js) -->
    <div id="view-beta" hidden>
+    <!-- Learned blend (Learning section in app.js; data/alta-learning.json is written daily by scripts/learn_alta.py) -->
+    <section class="card">
+      <h2>Learned forecast blend <span class="muted small">(what the learning recommends for each day ahead)</span></h2>
+      <div id="learn-summary" class="learn-summary"><p class="muted">Loading what the learning has found…</p></div>
+      <div class="table-wrap">
+        <table id="learn-days"><thead></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Snow Summary <span class="muted small">(learned blend · each day uses the approach recommended for it)</span></h2>
+      <div id="learned-scroll" class="summary-scroll" tabindex="0" aria-label="Learned snow summary chart, scrolls sideways">
+        <div id="learned-inner" class="chart-wrap summary"><canvas id="chart-learned"></canvas></div>
+      </div>
+      <p id="learned-note" class="muted small station-note"></p>
+    </section>
+
+    <!-- Each model's running total behind the learned Snow Summary (drawLearning in app.js) -->
+    <section class="card">
+      <h2>Snowfall by model <span class="muted small">(learned blend · Mid-Collins · 9,662 ft · totals from now)</span></h2>
+      <div class="chart-wrap"><canvas id="chart-learned-models"></canvas></div>
+      <p class="muted small station-note">Each model in the version each day's approach uses. The thick white line is the learned blend; a model's line stops where its runs end.</p>
+    </section>
+
+    <section class="card">
+      <h2>What the learning has found <span class="muted small">(over time, by forecast range)</span></h2>
+      <div id="learn-ranges" class="range-bar" aria-label="Forecast range shown"></div>
+      <h3 class="sub-head">Model weights it recommended, day by day</h3>
+      <div class="chart-wrap short"><canvas id="chart-learn-weights"></canvas></div>
+      <h3 class="sub-head">Typical miss: recommended approach vs. the Forecast tab</h3>
+      <div class="chart-wrap short"><canvas id="chart-learn-miss"></canvas></div>
+      <h3 class="sub-head">Every approach tried for this range, best first</h3>
+      <div class="table-wrap">
+        <table id="learn-scores"><thead></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section class="card info">
+      <h2>How the learning works</h2>
+      <ul>
+        <li><b>Every morning</b> a scheduled job records what each model forecast at 6 AM for the next 16 days at Mid-Collins: GFS + HRRR, NBM, NAM and ECMWF, each in four versions (its own rain/snow split or the elevation fix, its newest run or its recent runs blended by age).</li>
+        <li><b>Once a day has passed</b>, every forecast made for it is checked against the snow the Collins board measured. Each forecast's snow water is turned into snow with the day's actual Kuchera ratios, the same for every version, so only the models and versions are being compared. Days when nothing was measured or forecast are not used.</li>
+        <li><b>Learning:</b> for each range (day 1, 2, 3, 4–5, 6–7, 8–10, 11–16) and each version, it finds the weight for each model and an overall scale factor (0.5–2×) that best match what was measured. Recent days count for more (a day's weight halves every 90 days). With few storms the weights stay close to an even average and the scale close to 1.</li>
+        <li><b>Fair scoring:</b> every approach, learned or not, is scored only on forecasts it would have made before seeing the outcome: on each day it is refitted on the days before. The recommended approach for a range is the one with the smallest typical miss, once that range has been checked against at least 4 different days with measured snow, so a single storm cannot decide it. Until then the Forecast tab's average is used, and the best approach so far is shown as leading.</li>
+        <li><b>The learned Snow Summary</b> uses each day's recommended approach on the model runs loaded for this tab, with the live GFS's hourly snow ratios.</li>
+      </ul>
+    </section>
+
     <section class="card">
       <h2>Snow Summary <span class="muted small">(Beta · each model's recent runs blended by age)</span></h2>
       <p id="beta-status" class="muted small station-note">Loading the recent model runs…</p>
@@ -268,9 +316,27 @@
       </div>
     </section>
 
-    <!-- Beta's snow against the Forecast tab's Snow Summary for the same periods (drawBetaCompare in app.js) -->
+    <!-- The Forecast tab's Snow Summary with the elevation fix (elevNewest in app.js) -->
     <section class="card">
-      <h2>Beta vs. the Forecast tab <span class="muted small">(forecast snow from now)</span></h2>
+      <h2>Snow Summary <span class="muted small">(Forecast tab + elevation fix · rain or snow decided at Collins's height)</span></h2>
+      <div id="betafc-elev-scroll" class="summary-scroll" tabindex="0" aria-label="Forecast tab snow summary with elevation fix, scrolls sideways">
+        <div id="betafc-elev-inner" class="chart-wrap summary"><canvas id="chart-betafc-elev"></canvas></div>
+      </div>
+      <p class="muted small station-note">Newest run of each model, averaged evenly as on the Forecast tab. Same colours as the chart above; rain here is the water the elevation fix makes rain.</p>
+    </section>
+
+    <!-- Beta's run blend with the elevation fix (betaBlend's `fix` in app.js) -->
+    <section class="card">
+      <h2>Snow Summary <span class="muted small">(Beta + elevation fix · recent runs blended by age, rain or snow decided at Collins's height)</span></h2>
+      <div id="beta-elev-scroll" class="summary-scroll" tabindex="0" aria-label="Beta snow summary with elevation fix, scrolls sideways">
+        <div id="beta-elev-inner" class="chart-wrap summary"><canvas id="chart-beta-elev"></canvas></div>
+      </div>
+      <p class="muted small station-note">The same runs and weights as Beta. Same colours as the chart above.</p>
+    </section>
+
+    <!-- All four Snow Summaries' snow for the same periods (drawBetaCompare in app.js) -->
+    <section class="card">
+      <h2>Snow Summaries compared <span class="muted small">(forecast snow from now)</span></h2>
       <div class="table-wrap">
         <table id="beta-compare"><thead></thead><tbody></tbody></table>
       </div>
@@ -302,7 +368,14 @@
         <li><b>Within a model:</b> each run's weight halves for every few hours of age. The half-life is 3 hours for the first day ahead, rising to 5 hours by day 2 and 12 hours from day 5 on, so the near days follow the newest runs and the far days blend about a day of runs.</li>
         <li><b>Across models:</b> GFS + HRRR (HRRR while its runs reach that hour, then GFS), NBM and NAM, the same three as the Forecast tab. In the first day the fresher model counts for more (its weight halves for every 6 hours its newest run is older), easing off to an even average by day 2.</li>
         <li><b>Snow:</b> each run's snow water is turned into snow with the current GFS's hourly Kuchera ratio, as on the Forecast tab. The older runs' own upper-air temperatures are not in the archive.</li>
-        <li><b>Unchanged:</b> the already-fallen bars and the rain, which come from the same GFS record as the Forecast tab. The Snow Summary on the Forecast tab is not affected.</li>
+        <li><b>Elevation fix</b> (the two "+ elevation fix" Snow Summaries): every model reads Collins from a grid square whose ground is lower than the study plot (NBM 9,531 ft, NAM 9,501 ft, HRRR 9,268 ft, GFS 8,228 ft, against 9,662 ft), and decides rain or snow down there. The fix takes each model's total water and:
+          <ul>
+            <li>works out the temperature at Collins's height, from the model's own temperature at about 10,000 ft where it gives one (the live GFS and HRRR, and the HRRR's past runs), otherwise by the standard 3.6 °F per 1,000 ft;</li>
+            <li>turns that and the humidity into a wet-bulb temperature, averages it across the models, and counts the water as all snow at 32 °F or colder, all rain at 35 °F or warmer, and partly snow in between;</li>
+            <li>adds 8% more precipitation for every 1,000 ft the model's ground sits below Collins (about 12% for the GFS, 1–3% for the others).</li>
+          </ul>
+          The 32–35 °F range and the 8% are starting figures, to be adjusted against what the Collins station measures.</li>
+        <li><b>Unchanged:</b> the already-fallen bars, which come from the same GFS record as the Forecast tab, and the rain in the two versions without the elevation fix. The Snow Summary on the Forecast tab is not affected.</li>
       </ul>
     </section>
    </div>
