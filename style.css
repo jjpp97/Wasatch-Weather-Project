@@ -175,19 +175,23 @@ a { color: var(--accent); }
 .global-row { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
 body.global-mode .global-row { display: flex; }
 body.global-mode .loc-row, body.global-mode .tabs[data-area-pages], body.global-mode #updated { display: none; }
-/* Learning section on the Beta tab */
-.learn-summary { display: grid; gap: 8px; margin-bottom: 12px; }
-.learn-summary p, .learn-summary ul { margin: 0; }
-.learn-summary ul { padding-left: 1.1em; display: grid; gap: 4px; }
+/* Machine Learning tab */
 .card h3.sub-head { font-size: 0.85rem; font-weight: 600; color: var(--muted); margin: 16px 0 6px; }
-tr.learn-pick td { background: rgba(108, 195, 255, 0.12); }
-tr.learn-pick td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
-/* Snow Summary comparison on the Beta tab: each total with its difference from the Forecast tab
-   under it, more snow in blue and less in orange */
-#beta-compare .diff { display: block; font-size: 0.75rem; font-weight: 600; }
-#beta-compare .diff.muted { font-weight: 400; }
-.beta-more { color: var(--snow); }
-.beta-less { color: #f8a55f; }
+.ml-banner { margin: 0 0 10px; padding: 8px 12px; border: 1px solid #6b5a2a; border-left: 3px solid #ffd166;
+  border-radius: 8px; background: rgba(255, 209, 102, 0.08); color: var(--text); font-size: 0.9rem; }
+.ml-lead-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0 0 6px; }
+.ml-lead-pick .range-bar { margin: 0; }
+.ml-step { margin: 18px 0 2px; font-size: 1.1rem; }
+.ml-explain { margin: 0 0 10px; color: var(--muted); font-size: 0.85rem; }
+.ml-total { color: var(--snow); font-weight: 600; }
+.ml-up { min-width: 560px; } /* 16 days stay readable on a phone; the chart scrolls sideways */
+.ml-ghost-box { background: rgba(201, 212, 226, 0.22); }
+.ml-flag { display: inline-block; font-size: 0.72rem; font-weight: 600; color: #f8a55f; border: 1px solid #f8a55f;
+  border-radius: 999px; padding: 0 6px; }
+.ml-table td:nth-child(n+3) { white-space: normal; }
+#ml-corrections td { text-align: left; }
+#ml-compare th[colspan] { text-align: center; }
+td.ml-best { background: rgba(95, 211, 163, 0.16); color: var(--text); font-weight: 600; box-shadow: inset 0 0 0 1px #5fd3a3; }
 /* Map: the satellite map fills most of the screen; the window a click opens is in the page's colours */
 /* `isolation` keeps Leaflet's layers (z-index 400 and up) under the drop-down menus */
 .map { height: calc(100vh - 220px); min-height: 380px; border: 1px solid var(--border); border-radius: 12px; background: #0b1119; isolation: isolate; }

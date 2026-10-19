@@ -81,7 +81,7 @@
       <nav class="tabs" data-area-pages aria-label="Alta pages">
         <button type="button" class="tab active" data-view="forecast" aria-pressed="true">Forecast</button>
         <!-- Alta only for now (app.js removes it elsewhere): the Snow Summary from recent model runs blended by age -->
-        <button type="button" class="tab" data-view="beta" aria-pressed="false">Beta</button>
+        <button type="button" class="tab" data-view="machine-learning" aria-pressed="false">Machine Learning</button>
         <button type="button" class="tab" data-view="metrics" aria-pressed="false">Backcountry Ski Metrics</button>
         <button type="button" class="tab" data-view="models" aria-pressed="false">Spaghettis</button>
         <button type="button" class="tab" data-view="stations" aria-pressed="false">Weather Stations</button>
@@ -248,151 +248,86 @@
     <div id="all-stations"></div>
    </div>
 
-   <!-- Beta tab (Alta only): a Snow Summary built from each model's recent runs, each run weighted by
-        its age, then the models averaged; below it, how the weights work out (Beta section in app.js) -->
-   <div id="view-beta" hidden>
-    <!-- Learned blend (Learning section in app.js; data/alta-learning.json is written daily by scripts/learn_alta.py) -->
-    <section class="card">
-      <h2>Learned forecast blend <span class="muted small">(what the learning recommends for each day ahead)</span></h2>
-      <div id="learn-summary" class="learn-summary"><p class="muted">Loading what the learning has found…</p></div>
-      <div class="table-wrap">
-        <table id="learn-days"><thead></thead><tbody></tbody></table>
-      </div>
-    </section>
+   <!-- Machine Learning tab (Alta only): a self-correcting snow forecast for Mid Collins, step by step.
+        data/ml-forecast.json is written each morning by ml_forecast/run.py (Machine Learning section in app.js) -->
+   <div id="view-machine-learning" hidden>
+    <p class="ml-banner">Experimental. Forecasts corrected using Alta's past forecast errors at Mid Collins.</p>
+    <p id="ml-status" class="muted small station-note">Loading…</p>
+    <div class="ml-lead-pick">
+      <span class="muted small">Track records show forecasts made</span>
+      <div id="ml-leads" class="range-bar" aria-label="Lead day shown in the track records"></div>
+    </div>
+
+    <h2 class="ml-step">Step 1 · Each model corrected</h2>
+    <p class="ml-explain">Measures each model's usual mistake at Alta, fixes it, then averages them.</p>
 
     <section class="card">
-      <h2>Snow Summary <span class="muted small">(learned blend · each day uses the approach recommended for it)</span></h2>
-      <div id="learned-scroll" class="summary-scroll" tabindex="0" aria-label="Learned snow summary chart, scrolls sideways">
-        <div id="learned-inner" class="chart-wrap summary"><canvas id="chart-learned"></canvas></div>
-      </div>
-      <p id="learned-note" class="muted small station-note"></p>
-    </section>
-
-    <!-- Each model's running total behind the learned Snow Summary (drawLearning in app.js) -->
-    <section class="card">
-      <h2>Snowfall by model <span class="muted small">(learned blend · Mid-Collins · 9,662 ft · totals from now)</span></h2>
-      <div class="chart-wrap"><canvas id="chart-learned-models"></canvas></div>
-      <p class="muted small station-note">Each model in the version each day's approach uses. The thick white line is the learned blend; a model's line stops where its runs end.</p>
-    </section>
-
-    <section class="card">
-      <h2>What the learning has found <span class="muted small">(over time, by forecast range)</span></h2>
-      <div id="learn-ranges" class="range-bar" aria-label="Forecast range shown"></div>
-      <h3 class="sub-head">Model weights it recommended, day by day</h3>
-      <div class="chart-wrap short"><canvas id="chart-learn-weights"></canvas></div>
-      <h3 class="sub-head">Typical miss: recommended approach vs. the Forecast tab</h3>
-      <div class="chart-wrap short"><canvas id="chart-learn-miss"></canvas></div>
-      <h3 class="sub-head">Every approach tried for this range, best first</h3>
-      <div class="table-wrap">
-        <table id="learn-scores"><thead></thead><tbody></tbody></table>
-      </div>
-    </section>
-
-    <!-- Snow ratio learned from the Collins board and gauge (drawRatio in app.js) -->
-    <section class="card">
-      <h2>Learned snow ratio <span class="muted small">(inches of snow per inch of water at Collins, against the Kuchera method)</span></h2>
-      <div id="ratio-summary" class="learn-summary"></div>
-      <div class="table-wrap">
-        <table id="ratio-bands"><thead></thead><tbody></tbody></table>
-      </div>
-      <h3 class="sub-head">Each snowy day: Kuchera's ratio vs. what Collins measured</h3>
-      <div class="chart-wrap short"><canvas id="chart-ratio-days"></canvas></div>
-      <h3 class="sub-head">The correction over time</h3>
-      <div class="chart-wrap short"><canvas id="chart-ratio-history"></canvas></div>
-    </section>
-
-    <section class="card info">
-      <h2>How the learning works</h2>
-      <ul>
-        <li><b>Every morning</b> a scheduled job records what each model forecast at 6 AM for the next 16 days at Mid-Collins: GFS + HRRR, NBM, NAM and ECMWF, each in four versions (its own rain/snow split or the elevation fix, its newest run or its recent runs blended by age).</li>
-        <li><b>Once a day has passed</b>, every forecast made for it is checked against the snow the Collins board measured. Each forecast's snow water is turned into snow with the day's actual Kuchera ratios, the same for every version, so only the models and versions are being compared. Days when nothing was measured or forecast are not used.</li>
-        <li><b>Learning:</b> for each range (day 1, 2, 3, 4–5, 6–7, 8–10, 11–16) and each version, it finds the weight for each model and an overall scale factor (0.5–2×) that best match what was measured. Recent days count for more (a day's weight halves every 90 days). With few storms the weights stay close to an even average and the scale close to 1.</li>
-        <li><b>Fair scoring:</b> every approach, learned or not, is scored only on forecasts it would have made before seeing the outcome: on each day it is refitted on the days before. The recommended approach for a range is the one with the smallest typical miss, once that range has been checked against at least 4 different days with measured snow, so a single storm cannot decide it. Until then the Forecast tab's average is used, and the best approach so far is shown as leading.</li>
-        <li><b>Snow ratio:</b> each snowy day at Collins (at least 1" on the board, at least 0.1" of water in the gauge while it was 35 °F or colder, and little of the day's water falling warmer) shows the real ratio: board snow ÷ gauge water. Divided by the Kuchera ratio for the same hours, that gives a correction. The corrections are averaged by how cold it was (near freezing, 30 °F and up; cold, 20–30 °F; very cold, below 20 °F), recent days counting for more, and held near ×1 until a band has 3 days behind it. Gauges catch less snow than falls in wind, which makes measured ratios run high, so the corrections are limited to ×0.4–1.6.</li>
-        <li><b>The learned Snow Summary</b> uses each day's recommended approach on the model runs loaded for this tab, with the live GFS's hourly Kuchera ratios times the learned correction for that hour's forecast temperature at Collins.</li>
-        <li><b>Elevation:</b> every forecast here is for the Collins snow station itself (40.5763, −111.6383, 9,662 ft), and every model's temperatures are adjusted to that height. Whether the full elevation fix (rain or snow decided at Collins's height, more precipitation for the height) is used is one of the things the learning decides, range by range.</li>
-      </ul>
-    </section>
-
-    <section class="card">
-      <h2>Snow Summary <span class="muted small">(Beta · each model's recent runs blended by age)</span></h2>
-      <p id="beta-status" class="muted small station-note">Loading the recent model runs…</p>
-      <div id="beta-scroll" class="summary-scroll" tabindex="0" aria-label="Beta snow summary chart, scrolls sideways">
-        <div id="beta-inner" class="chart-wrap summary"><canvas id="chart-beta"></canvas></div>
-      </div>
-      <!-- Same colours as the Snow Summary on the Forecast tab -->
+      <h2>Snow Summary <span class="muted small">(corrected average)</span></h2>
+      <p class="ml-explain">Days 0–7: each model's precipitation is scaled by how far off it has been lately at Collins, turned into snow the Forecast tab's way, then averaged. Days 8–11: the models' average, uncorrected. Days 12–16: the GFS ensemble's outlook, not bias-corrected.</p>
+      <h3 class="sub-head">Upcoming <span id="ml-total-1" class="ml-total"></span></h3>
+      <div class="summary-scroll"><div class="chart-wrap ml-chart ml-up"><canvas id="chart-ml-up-1"></canvas></div></div>
       <div class="line-key">
-        <span><i class="box" style="background:#8b9bb0"></i>Already fallen (model estimate)</span>
-        <span><i class="box" style="background:#9fd8ff"></i>Light snow, 14 to 1 or more</span>
-        <span><i class="box" style="background:#6cc3ff"></i>Average, 9 to 14 to 1</span>
-        <span><i class="box" style="background:#3f8cff"></i>Heavy, under 9 to 1</span>
-        <span><i class="box" style="background:#5fd3a3"></i>Rain</span>
-        <span><svg class="moon" viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 8.6A5 5 0 1 1 5.2 1a4 4 0 0 0 4.3 7.6z"/></svg>Fell at night</span>
+        <span><i class="box" style="background:#6cc3ff"></i>Days 0–7: corrected average</span>
+        <span><i class="box" style="background:#6cc3ff;opacity:0.4"></i>Partly corrected or uncorrected, incl. Days 8–11 (marked under the day)</span>
+        <span><i class="box" style="background:rgba(108,195,255,0.67);box-shadow:inset 0 0 0 1.5px #b39dff"></i>Days 12–16: GFS ensemble outlook, outlined (marked "outlook")</span>
+        <span><i class="box ml-ghost-box"></i>Plain average (Step 0), for comparison</span>
       </div>
+      <p class="muted small station-note">Days 12–16 average the GFS ensemble's 31 runs. They are not corrected for bias yet: the ensemble forecasts are now being saved each day, so they can be checked against Collins after a winter.</p>
+      <h3 class="sub-head">Track record <span class="muted">(forecast vs. measured at Mid Collins)</span></h3>
+      <div id="ml-track-1-scroll" class="summary-scroll"><div id="ml-track-1-inner" class="chart-wrap ml-chart"><canvas id="chart-ml-track-1"></canvas></div></div>
+      <p id="ml-score-1" class="muted small station-note"></p>
     </section>
 
-    <!-- The Forecast tab's Snow Summary with the elevation fix (elevNewest in app.js) -->
     <section class="card">
-      <h2>Snow Summary <span class="muted small">(Forecast tab + elevation fix · rain or snow decided at Collins's height)</span></h2>
-      <div id="betafc-elev-scroll" class="summary-scroll" tabindex="0" aria-label="Forecast tab snow summary with elevation fix, scrolls sideways">
-        <div id="betafc-elev-inner" class="chart-wrap summary"><canvas id="chart-betafc-elev"></canvas></div>
-      </div>
-      <p class="muted small station-note">Newest run of each model, averaged evenly as on the Forecast tab. Same colours as the chart above; rain here is the water the elevation fix makes rain.</p>
-    </section>
-
-    <!-- Beta's run blend with the elevation fix (betaBlend's `fix` in app.js) -->
-    <section class="card">
-      <h2>Snow Summary <span class="muted small">(Beta + elevation fix · recent runs blended by age, rain or snow decided at Collins's height)</span></h2>
-      <div id="beta-elev-scroll" class="summary-scroll" tabindex="0" aria-label="Beta snow summary with elevation fix, scrolls sideways">
-        <div id="beta-elev-inner" class="chart-wrap summary"><canvas id="chart-beta-elev"></canvas></div>
-      </div>
-      <p class="muted small station-note">The same runs and weights as Beta. Same colours as the chart above.</p>
-    </section>
-
-    <!-- All four Snow Summaries' snow for the same periods (drawBetaCompare in app.js) -->
-    <section class="card">
-      <h2>Snow Summaries compared <span class="muted small">(forecast snow from now)</span></h2>
+      <h2>Today's corrections <span class="muted small">(per model and lead day · Day 0 is today)</span></h2>
+      <p class="ml-explain">How far off each model has been at Collins lately, and what Step 1 does about it.</p>
       <div class="table-wrap">
-        <table id="beta-compare"><thead></thead><tbody></tbody></table>
+        <table id="ml-corrections" class="ml-table"><thead></thead><tbody></tbody></table>
       </div>
-      <p id="beta-compare-note" class="muted small station-note"></p>
+    </section>
+
+    <h2 class="ml-step">Step 0 · The forecast as it is</h2>
+    <p class="ml-explain">The site's forecast with nothing corrected: the yardstick every later step has to beat.</p>
+
+    <section class="card">
+      <h2>Snow Summary <span class="muted small">(plain average · GFS + HRRR, NBM and NAM, as on the Forecast tab)</span></h2>
+      <p class="ml-explain">The three models averaged evenly, as on the Forecast tab, except that no model's snow water may be more than its own precipitation (see How it works).</p>
+      <h3 class="sub-head">Upcoming <span id="ml-total-0a" class="ml-total"></span></h3>
+      <div class="summary-scroll"><div class="chart-wrap ml-chart ml-up"><canvas id="chart-ml-up-0a"></canvas></div></div>
+      <h3 class="sub-head">Track record <span class="muted">(forecast vs. measured at Mid Collins)</span></h3>
+      <div id="ml-track-0a-scroll" class="summary-scroll"><div id="ml-track-0a-inner" class="chart-wrap ml-chart"><canvas id="chart-ml-track-0a"></canvas></div></div>
+      <p id="ml-score-0a" class="muted small station-note"></p>
     </section>
 
     <section class="card">
-      <h2>Model weights by day <span class="muted small">(each model's share of the average)</span></h2>
-      <div class="chart-wrap"><canvas id="chart-beta-models"></canvas></div>
+      <h2>Snow Summary <span class="muted small">(NBM alone · the National Weather Service's blend)</span></h2>
+      <p class="ml-explain">The NBM on its own, since it is already a blend of many models.</p>
+      <h3 class="sub-head">Upcoming <span id="ml-total-0b" class="ml-total"></span></h3>
+      <div class="summary-scroll"><div class="chart-wrap ml-chart ml-up"><canvas id="chart-ml-up-0b"></canvas></div></div>
+      <h3 class="sub-head">Track record <span class="muted">(forecast vs. measured at Mid Collins)</span></h3>
+      <div id="ml-track-0b-scroll" class="summary-scroll"><div id="ml-track-0b-inner" class="chart-wrap ml-chart"><canvas id="chart-ml-track-0b"></canvas></div></div>
+      <p id="ml-score-0b" class="muted small station-note"></p>
     </section>
 
     <section class="card">
-      <h2>Newest run's share by day <span class="muted small">(within each model; the rest goes to its earlier runs)</span></h2>
-      <div class="chart-wrap short"><canvas id="chart-beta-newest"></canvas></div>
-    </section>
-
-    <section class="card">
-      <h2>When new model data comes in <span class="muted small">(runs in use, and the next ones expected · Mountain time)</span></h2>
-      <div class="chart-wrap"><canvas id="chart-beta-runs"></canvas></div>
+      <h2>Which forecast did best <span class="muted small">(past winters, each day forecast with only what was known then)</span></h2>
+      <p class="ml-explain">Average miss per day (MAE) for each step, on the same days. Skill is how much smaller the miss is than the plain average's.</p>
       <div class="table-wrap">
-        <table id="beta-runs"><thead></thead><tbody></tbody></table>
+        <table id="ml-compare" class="ml-table"><thead></thead><tbody></tbody></table>
       </div>
+      <p id="ml-compare-note" class="muted small station-note"></p>
     </section>
 
     <section class="card info">
-      <h2>How Beta works</h2>
-      <ul>
-        <li><b>Runs:</b> for each model, its runs from roughly the last day, from Open-Meteo's archive of single model runs. That archive keeps the GFS and NAM every 6 hours and the HRRR and NBM every 3 hours.</li>
-        <li><b>Within a model:</b> each run's weight halves for every few hours of age. The half-life is 3 hours for the first day ahead, rising to 5 hours by day 2 and 12 hours from day 5 on, so the near days follow the newest runs and the far days blend about a day of runs.</li>
-        <li><b>Across models:</b> GFS + HRRR (HRRR while its runs reach that hour, then GFS), NBM and NAM, the same three as the Forecast tab. In the first day the fresher model counts for more (its weight halves for every 6 hours its newest run is older), easing off to an even average by day 2.</li>
-        <li><b>Snow:</b> each run's snow water is turned into snow with the current GFS's hourly Kuchera ratio, as on the Forecast tab. The older runs' own upper-air temperatures are not in the archive.</li>
-        <li><b>Elevation fix</b> (the two "+ elevation fix" Snow Summaries): every model reads Collins from a grid square whose ground is lower than the study plot (NBM 9,531 ft, NAM 9,501 ft, HRRR 9,268 ft, GFS 8,228 ft, against 9,662 ft), and decides rain or snow down there. The fix takes each model's total water and:
-          <ul>
-            <li>works out the temperature at Collins's height, from the model's own temperature at about 10,000 ft where it gives one (the live GFS and HRRR, and the HRRR's past runs), otherwise by the standard 3.6 °F per 1,000 ft;</li>
-            <li>turns that and the humidity into a wet-bulb temperature, averages it across the models, and counts the water as all snow at 32 °F or colder, all rain at 35 °F or warmer, and partly snow in between;</li>
-            <li>adds 8% more precipitation for every 1,000 ft the model's ground sits below Collins (about 12% for the GFS, 1–3% for the others).</li>
-          </ul>
-          The 32–35 °F range and the 8% are starting figures, to be adjusted against what the Collins station measures.</li>
-        <li><b>Unchanged:</b> the already-fallen bars, which come from the same GFS record as the Forecast tab, and the rain in the two versions without the elevation fix. The Snow Summary on the Forecast tab is not affected.</li>
-      </ul>
+      <h2>Data used</h2>
+      <div id="ml-data-used"></div>
     </section>
+
+    <section class="card info">
+      <h2>How it works</h2>
+      <ul id="ml-how"></ul>
+    </section>
+    <p class="source">Forecasts: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> Previous Runs and Forecast APIs (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>). Measurements: the Alta – Collins weather station (CLN, 9,662 ft) via <a href="https://synopticdata.com/" target="_blank" rel="noopener">Synoptic Data</a>.</p>
    </div>
 
    <!-- Forecast tab: all the forecast tiles and charts -->
@@ -710,7 +645,7 @@
       <h2>Measured snow boxes</h2>
       <p>The box with a blue left edge, beside Now, Wind and Clouds, holds measurements, not forecasts: the large blue numbers. <span data-area="alta">They come from Alta's Collins snow study plot at 9,662 ft, the same spot as the page's forecast point, through the Synoptic Data service. It reports in whole inches.</span><span data-area="solitude">They come from Solitude's Summit snow study plot at 9,641 ft, the same spot as the page's forecast point, through the Synoptic Data service. It reports in tenths of an inch.</span><span data-area="deervalley">They come from Deer Valley's Ontario station at 9,100 ft, the same spot as the page's forecast point, through the Synoptic Data service. It reports in tenths of an inch every five minutes, and the page keeps one reading an hour. Its precipitation gauge barely registers snow, so no SWE is shown for Deer Valley.</span></p>
       <ul>
-        <li><b>How new snow is counted:</b> the station has a board that measures the snow that has piled up since staff last cleared it. The page adds snow each time the board rises above its highest reading since it was cleared. A drop of more than 2" is taken to mean the board was cleared; smaller dips are treated as settling or sensor noise and ignored. Readings taken when it is above 40°F are skipped, because the board cannot be gaining snow then and a jump is a sensor glitch. So is a single reading that jumps more than 3" above the readings either side of it when those two agree, which catches the sudden one-off spikes some sensors give.</li>
+        <li><b>How new snow is counted:</b> the station has a board that measures the snow that has piled up since staff last cleared it. The page adds snow each time the board rises above its highest reading since it was cleared. A drop of more than 2" that leaves 1" or less is taken to mean the board was cleared; a bigger drop that leaves more on the board is settling, and counting carries on from the lower level; smaller dips are treated as settling or sensor noise and ignored. Readings taken when it is above 40°F are skipped, because the board cannot be gaining snow then and a jump is a sensor glitch. So is a single reading that jumps more than 3" above the readings either side of it when those two agree, which catches the sudden one-off spikes some sensors give.</li>
         <li><b>Storm total:</b> the measured snow on the days of the most recent storm shown on the Snow Summary: the one under way, or otherwise the last one that ended. The storm's days come from the forecast and the model record, and the snow in them is measured. For a storm that has not finished, it is the total up to now.</li>
         <li><b>Last 12 hours, 24 hours and 7 days:</b> the measured snow in that time, counted back from now.</li>
         <li><b>The small "SWE" number beside each (Alta only):</b> the snow water measured by the station's precipitation gauge over the same period. The gauge records the water that fell in each hour but cannot tell snow from rain, so the page only counts hours when it was 35°F or colder at the station. Gauges catch less than really falls when it is windy, so the true figure is often a little higher. Solitude's Summit station has no gauge, and Deer Valley's Ontario gauge barely registers snow, so no SWE is shown at either.</li>
@@ -753,7 +688,7 @@
         <li><b>The small darker blue number beside each storm total:</b> the storm's snow water (SWE) in inches, from the same models as the snow. It covers the same thing as the large number next to it: the whole storm, or for a storm under way only what is still to come. Under a very short bracket the word "SWE" is left off to save room.</li>
         <li><b>Rain bars:</b> each day's rain, in inches of water, is stacked in green on top of that day's snow (a darker green for rain that has already fallen). The white number above a bar is still the day's snow only; when the day has rain, its amount is written in green just under that. The scale on the right is inches for both, so remember that an inch of rain is far more water than an inch of snow. Storms are still picked out by their snow, so a day with only rain does not start or extend a storm.</li>
         <li><b>The small green number after it:</b> the rain in that storm, in inches of water, shown only when the storm has any. It uses the same rain figures as the SWE chart, and like the other two numbers it covers only what is still to come for a storm under way. Snow water plus rain is the storm's total water.</li>
-        <li><b>Storm totals:</b> a storm is a run of back-to-back days with at least 0.1" of snow each. One day with less than that ends the storm, so two bursts of snow separated by a dry day count as two storms. The total adds up everything in those bars, including the grey "already fallen" part if the storm has already started.</li>
+        <li><b>Storm totals:</b> a storm is a run of back-to-back days with at least 0.1" of snow each. One day with less than that ends the storm, so two bursts of snow separated by a dry day count as two storms. A light day of under 0.4" between two snowier stretches splits them too: it counts in neither storm, though its own bar still shows its snow. The total adds up everything in those bars, including the grey "already fallen" part if the storm has already started.</li>
       </ul>
       <p>This chart always shows the full range; the 24 h, 72 h, 7-day and 16-day tiles do not zoom it.</p>
     </section>

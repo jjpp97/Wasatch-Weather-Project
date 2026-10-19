@@ -256,13 +256,13 @@ async function loadForecast() {
   renderWater();
   renderDailyForecast();
   renderCharts(fc.slice(0, activeHours ?? fc.length));
-  // The Beta tab blends against this forecast's hours and snow ratios
-  if (betaWaiting) { betaWaiting = false; loadBeta(); } else if (betaData) drawBeta();
+  // The Machine Learning tab corrects this forecast's models
+  if (mlShowing()) drawMachineLearning();
 }
 
 // The downloads behind each of a resort's tabs that have data, so the refresh button can tell
 // whether the open tab has anything over three minutes old. Filled as the downloads are made.
-const tabDownloads = { forecast: new Set(), models: new Set(), stations: new Set(), beta: new Set() };
+const tabDownloads = { forecast: new Set(), models: new Set(), stations: new Set(), "machine-learning": new Set() };
 const track = (tabs, url) => { tabs.forEach(t => tabDownloads[t].add(new URL(url, location.href).href)); return url; };
 
 // The resort's name and the menu of other resorts, and every piece of wording on the page that names the resort or
@@ -396,6 +396,7 @@ async function loadModels(locs) {
       renderWater();
       renderDailyForecast();
       renderCharts(allRows.slice(0, activeHours ?? allRows.length));
+      if (mlShowing()) drawMachineLearning();
     }
   } catch (err) {
     console.warn("Model comparison unavailable, showing GFS only", err);
@@ -664,7 +665,8 @@ function parseMeasured(file, snow) {
 
   // New snow from the "snow interval" board, which staff clear from time to time. Snow is counted
   // whenever the board rises above its highest reading since it was last cleared. A drop of more
-  // than 2" means it was cleared; smaller dips are settling or sensor noise and are ignored.
+  // than 2" to 1" or less means it was cleared; a drop that leaves more is settling, and smaller
+  // dips are settling or sensor noise and are ignored.
   // Readings taken above TOO_WARM_F are skipped altogether: the board cannot be gaining snow then,
   // so a jump is a sensor glitch (one read 9" for a single hour at 55°F).
   const TOO_WARM_F = 40;
@@ -680,6 +682,10 @@ function parseMeasured(file, snow) {
   for (const r of steady) {
     if (r.temp != null && r.temp > TOO_WARM_F) continue;
     if (peak == null || r.board < peak - 2) {
+      // A drop of more than 2" is a clearing only if the board is left near empty (1" or less);
+      // otherwise the snow has settled, and counting carries on from the lower level. (Counting a
+      // settled board as cleared added up to 75" a season too much against Alta's own totals.)
+      if (peak != null && r.board > 1) { peak = r.board; continue; }
       if (peak != null && r.board > 0) newSnow.push({ t: r.t, inches: r.board }); // already some on the cleared board
       peak = r.board;
     } else if (r.board > peak) {
@@ -1086,687 +1092,448 @@ async function openSpotForecast(latlng) {
   }
 }
 
-// ---------- Beta tab (Alta only) ----------
-// An experimental Snow Summary. Each model's recent runs come from Open-Meteo's archive of single
-// runs; within a model each run's weight halves for every BETA_HALF_LIFE hours of its age, and the
-// models are then averaged, the fresher ones counting for more in the first day (BETA_FRESH).
-// Snow water becomes snow with the live GFS's hourly Kuchera ratio, as in modelSeries. Nothing
-// here touches the Forecast tab's Snow Summary.
-//   every  hours between the runs the archive keeps; back: how far back to look for runs, in hours
-//   delay  typical hours from a run's start until it can be downloaded (replaced by Open-Meteo's own
-//          figure when its metadata loads); swe: how the run's snow water is worked out
-const BETA_MODELS = [
-  { key: "hrrr", id: "ncep_hrrr_conus", name: "HRRR", every: 3, back: 18, days: 3, delay: 1.9, color: "#ff6b8b" },
-  { key: "gfs", id: "ncep_gfs013", name: "GFS", every: 6, back: 30, days: 16, delay: 5.4, color: "#ff8a5c" },
-  { key: "nbm", id: "ncep_nbm_conus", name: "NBM", every: 3, back: 27, days: 12, delay: 1.4, color: "#ffd166" },
-  { key: "nam", id: "ncep_nam_conus", name: "NAM", every: 6, back: 24, days: 3, delay: 2.7, color: "#6cc3ff" },
-  // Only the learned blend uses ECMWF; Beta and its elevation fix stay with the Forecast tab's three
-  { key: "ecmwf", id: "ecmwf_ifs", name: "ECMWF", every: 6, back: 30, days: 16, delay: 6.4, color: "#ff6fae" },
-];
-// The models averaged, as on the Forecast tab: HRRR's runs stand in for the GFS while they reach an hour
-const BETA_MEMBERS = [
-  { key: "gfs", name: "GFS + HRRR", color: "#ff8a5c", pools: ["hrrr", "gfs"] },
-  { key: "nbm", name: "NBM", color: "#ffd166", pools: ["nbm"] },
-  { key: "nam", name: "NAM", color: "#6cc3ff", pools: ["nam"] },
-];
-// [hours ahead, value] points, joined by straight lines
-const BETA_HALF_LIFE = [[0, 3], [24, 3], [48, 5], [120, 12]];   // hours of age that halve a run's weight
-const BETA_FRESH = [[0, 1 / 6], [24, 1 / 6], [48, 0]];          // across models: halvings per hour of the newest run's age
-const lerpAt = (pts, x) => {
-  if (x <= pts[0][0]) return pts[0][1];
-  for (let i = 1; i < pts.length; i++) {
-    if (x <= pts[i][0]) { const [x0, y0] = pts[i - 1], [x1, y1] = pts[i]; return y0 + (y1 - y0) * (x - x0) / (x1 - x0); }
-  }
-  return pts[pts.length - 1][1];
+// ---------- Machine Learning tab (Alta only) ----------
+// A self-correcting snow forecast for Mid Collins, built step by step. Each morning
+// ml_forecast/run.py (see ml_forecast/README.md) measures each model's usual mistake at Collins,
+// lead day by lead day, and writes data/ml-forecast.json: today's corrections, and a walk-forward
+// test of every step over past winters. This tab applies those corrections to the live models the
+// Forecast tab already loads, with each model's snow water capped at its precipitation (see drawMlUpcoming).
+//   Step 0a  the plain average of GFS + HRRR, NBM and NAM; Step 0b  the NBM alone
+//   Step 1   each model's precipitation times its correction for that lead day, then averaged
+// Days 8–11 of Step 1 are the uncorrected average; Days 12–16 the GFS ensemble (ML_ENSEMBLES), marked "outlook".
+const ML_STEPS = {
+  "0a": { name: "Plain average", line: "#c9d4e2" },
+  "0b": { name: "NBM alone", line: "#ffd166" },
+  "1": { name: "Corrected average", line: "#5fd3a3" },
 };
+const ML_MODEL_KEYS = { gfs_seamless: "gfs", ncep_nbm_conus: "nbm", ncep_nam_conus: "nam" };
+const ML_GHOST = "rgba(201, 212, 226, 0.22)"; // Step 0a drawn faintly behind the other steps
+let mlData = null;  // data/ml-forecast.json once loaded
+let mlPrecip = null; // each model's hourly precipitation: Map(model id -> Map(time -> inches))
+let mlLead = 1;     // lead day shown in the track records
 
-// ---- Elevation fix (the two "+ elevation fix" Snow Summaries) ----
-// Each model reads Collins from a grid square whose ground is lower than the study plot, and
-// decides rain or snow there. The fix, hour by hour and model by model:
-//   1. Temperature at Collins: between the square's ground (CELL_M) and the model's own 700 hPa
-//      level (about 10,000 ft) where the model gives it; otherwise Open-Meteo's standard
-//      adjustment of 6.5 °C per km from the square's height.
-//   2. Rain or snow: the wet-bulb temperature at Collins, averaged across the models, gives the
-//      share that falls as snow: all of it at 32 °F or below, none at 35 °F, in a straight line between.
-//   3. More precipitation for the height: ELEV_QPF more for every 1,000 ft the square sits below Collins.
-//   4. Snow: the snow water times the same hourly Kuchera ratio as every other Snow Summary.
-// The square heights are Open-Meteo's figures for Collins (asked with elevation=nan, October 2026),
-// so this is for Alta's Mid-Collins point only. ELEV_QPF and the 32–35 °F range are starting
-// figures, to be adjusted against what the Collins station measures.
-const CELL_M = { hrrr: 2825, gfs: 2508, nam: 2896, nbm: 2905, ecmwf: 2775 };
-const ELEV_QPF = 0.08;
-const qpfFactor = (key, siteM) => 1 + ELEV_QPF * Math.max(0, siteM - CELL_M[key]) / 304.8;
-// Temperature at the site (°C) from Open-Meteo's adjusted 2 m temperature `tDown`, using the
-// model's 700 hPa temperature and height when it has them
-function siteTemp(key, siteM, tDown, t700, z700) {
-  if (tDown == null) return null;
-  const cell = CELL_M[key];
-  if (t700 == null || z700 == null || !(z700 > siteM && siteM > cell)) return tDown;
-  const tCell = tDown + 0.0065 * (siteM - cell); // undo the standard adjustment
-  return tCell + (t700 - tCell) * (siteM - cell) / (z700 - cell);
-}
-// Wet-bulb temperature (°C) from temperature (°C) and relative humidity (%), Stull (2011)
-function wetBulb(t, rh) {
-  if (t == null || rh == null) return null;
-  return t * Math.atan(0.151977 * Math.sqrt(rh + 8.313659)) + Math.atan(t + rh) - Math.atan(rh - 1.676331)
-    + 0.00391838 * rh ** 1.5 * Math.atan(0.023101 * rh) - 4.686035;
-}
-const snowShare = twC => Math.min(1, Math.max(0, (35 - (twC * 9 / 5 + 32)) / 3));
-// One model's hourly figures for the fix, from an Open-Meteo `hourly` block: Map(time -> { water, tw })
-function fixHours(key, h, siteM, upper = h) {
-  const out = new Map();
-  const at = new Map((upper.time || []).map((t, i) => [t, i]));
-  h.time.forEach((t, i) => {
-    const water = h.precipitation?.[i];
-    const j = at.get(t);
-    const temp = siteTemp(key, siteM, h.temperature_2m?.[i], upper.temperature_700hPa?.[j], upper.geopotential_height_700hPa?.[j]);
-    const tw = wetBulb(temp, h.relative_humidity_2m?.[i]);
-    if (water != null && tw != null) out.set(t, { water, tw });
-  });
-  return out;
-}
-// The fix applied to one hour: `parts` are [{ key, water, tw, w }] (w: the model's weight)
-function fixHour(parts, ratio) {
-  const W = parts.reduce((a, p) => a + p.w, 0);
-  if (!W) return { swe: null, snow: null, rain: null };
-  const water = parts.reduce((a, p) => a + p.water * p.fix * p.w, 0) / W;
-  const share = snowShare(parts.reduce((a, p) => a + p.tw * p.w, 0) / W);
-  return { swe: water * share, snow: water * share * ratio, rain: water * (1 - share) };
-}
+// Days 12–16 of the corrected Snow Summary: the GFS ensemble's outlook. Days 8–11 stay the average
+// of the models (uncorrected; the NBM ends about Day 10, leaving the GFS). The ensemble's snow water
+// is the mean of its 31 runs, each capped at its own precipitation like the models above; snow uses
+// the same Kuchera ratio. Not bias-corrected: there is no history of past ensemble forecasts to
+// measure it against yet (ml_forecast/outlook.py saves them each day so they can be scored later).
+const ML_OUTLOOK_FROM = 12;
+const ML_ENSEMBLES = [
+  { api: "gfs_seamless", ending: "ncep_gefs_seamless", name: "GFS ensemble", weight: 1 },
+];
+const ML_OUTLOOK_COLOR = "#b39dff"; // the outline on the outlook's bars, so they never pass for corrected days
+let mlEnsemble = null; // Map(ending -> Map(time -> mean snow water of its runs))
 
-let betaData = null;     // { runs, live, fetchedAt } once loaded
-let betaWaiting = false; // the tab was opened before the forecast had loaded
-
-// Every run of one model the archive has from the last `back` hours, as { model, init, swe: Map(time -> inches),
-// fix: Map(time -> { water, tw }) }. Runs it does not have (yet) are skipped.
-async function betaRuns(m, loc) {
-  const H = 3600000, now = Date.now(), siteM = loc.elevation_ft * 0.3048;
-  const inits = [];
-  for (let t = Math.floor(now / (m.every * H)) * m.every * H; t >= now - m.back * H; t -= m.every * H) inits.push(t);
-  const runs = await Promise.all(inits.map(async init => {
-    const url = "https://single-runs-api.open-meteo.com/v1/forecast?" + new URLSearchParams({
-      latitude: loc.lat, longitude: loc.lon, elevation: Math.round(siteM), timezone: loc.timezone,
-      // Temperatures in °C for the elevation fix; only the HRRR's archived runs keep the 700 hPa level
-      hourly: "precipitation,rain,showers,snowfall,temperature_2m,relative_humidity_2m" +
-        (m.key === "hrrr" ? ",temperature_700hPa,geopotential_height_700hPa" : ""),
-      models: m.id, run: new Date(init).toISOString().slice(0, 16), forecast_days: m.days, precipitation_unit: "inch",
+async function loadMlEnsemble() {
+  const j = await apiJson(track(["machine-learning"], "https://ensemble-api.open-meteo.com/v1/ensemble?" + new URLSearchParams({
+    ...pointParams([locations[0]]), hourly: "precipitation,snowfall", models: ML_ENSEMBLES.map(e => e.api).join(","),
+    forecast_days: 16, precipitation_unit: "inch",
+  })), { cache: "no-store" });
+  const h = j.hourly;
+  mlEnsemble = new Map(ML_ENSEMBLES.map(e => {
+    const runs = Object.keys(h).filter(k => k.startsWith("precipitation_") && k.endsWith(e.ending));
+    const mean = new Map();
+    h.time.forEach((t, i) => {
+      const w = runs.map(k => {
+        const p = h[k][i], s = h[k.replace("precipitation_", "snowfall_")]?.[i];
+        return p == null || s == null ? null : Math.min(s / 7, p);
+      }).filter(v => v != null);
+      if (w.length) mean.set(t, w.reduce((a, b) => a + b, 0) / w.length);
     });
-    try {
-      const h = (await apiJson(track(["beta"], url), { cache: "no-store" })).hourly;
-      const swe = new Map();
-      h.time.forEach((t, i) => {
-        // The GFS's own way, as in hourRows; the others from their snowfall, reported at 7 to 1 (see modelSeries)
-        const v = m.key === "gfs"
-          ? (h.precipitation[i] == null ? null : Math.max(0, h.precipitation[i] - (h.rain[i] ?? 0) - (h.showers[i] ?? 0)))
-          : (h.snowfall[i] == null ? null : h.snowfall[i] / 7);
-        if (v != null) swe.set(t, v);
-      });
-      return swe.size ? { model: m, init, swe, fix: fixHours(m.key, h, siteM) } : null;
-    } catch {
-      return null;
-    }
+    return [e.ending, mean];
   }));
-  return runs.filter(Boolean);
 }
 
-// The newest run of each model, live from the forecast API, for "Forecast tab + elevation fix":
-// Map(key -> Map(time -> { water, tw })). The GFS's 700 hPa level comes from its 0.25° version.
-async function elevLive(loc) {
-  const siteM = loc.elevation_ft * 0.3048;
-  const get = (model, hourly) => apiJson(track(["beta"], "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({
-    latitude: loc.lat, longitude: loc.lon, elevation: Math.round(siteM), timezone: loc.timezone,
-    models: model, hourly, forecast_days: 16, precipitation_unit: "inch",
-  })), { cache: "no-store" }).then(j => j.hourly).catch(() => null);
-  const surface = "precipitation,temperature_2m,relative_humidity_2m";
-  const [hrrr, gfs, gfsUp, nam, nbm] = await Promise.all([
-    get("ncep_hrrr_conus", surface + ",temperature_700hPa,geopotential_height_700hPa"),
-    get("ncep_gfs013", surface),
-    get("ncep_gfs025", "temperature_700hPa,geopotential_height_700hPa"),
-    get("ncep_nam_conus", surface),
-    get("ncep_nbm_conus", surface),
-  ]);
-  const live = new Map();
-  if (hrrr) live.set("hrrr", fixHours("hrrr", hrrr, siteM));
-  if (gfs) live.set("gfs", fixHours("gfs", gfs, siteM, gfsUp ?? gfs));
-  if (nam) live.set("nam", fixHours("nam", nam, siteM));
-  if (nbm) live.set("nbm", fixHours("nbm", nbm, siteM));
-  return live;
+// Each model's own precipitation, which caps its snow water (see drawMlUpcoming). Fetched here,
+// not added to the Forecast tab's download, so that tab is unchanged.
+async function loadMlPrecip() {
+  const ids = Object.keys(ML_MODEL_KEYS);
+  const j = await apiJson(track(["machine-learning"], "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({
+    ...pointParams([locations[0]]), hourly: "precipitation", models: ids.join(","), forecast_days: 16, precipitation_unit: "inch",
+  })), { cache: "no-store" });
+  mlPrecip = new Map(ids.map(id => [id, new Map(j.hourly.time.map((t, i) => [t, j.hourly[`precipitation_${id}`]?.[i]]))]));
 }
 
-// "Forecast tab + elevation fix": the newest run of each model, averaged evenly as on the Forecast
-// tab (HRRR while it reaches the hour, then the GFS), with the elevation fix
-function elevNewest(rows, live) {
-  const siteM = locations[0].elevation_ft * 0.3048;
-  return rows.map(r => {
-    const parts = [];
-    for (const member of BETA_MEMBERS) {
-      for (const key of member.pools) {
-        const v = live.get(key)?.get(r.time);
-        if (!v) continue;
-        parts.push({ key, water: v.water, tw: v.tw, fix: qpfFactor(key, siteM), w: 1 });
-        break;
-      }
+const mlShowing = () => !document.getElementById("view-machine-learning").hidden;
+const mlDayName = lead => (lead === 0 ? "Day 0 (today)" : lead === 1 ? "Day 1 (tomorrow)" : `Day ${lead}`);
+
+async function showMachineLearning() {
+  const status = document.getElementById("ml-status");
+  if (!mlData) {
+    try {
+      mlData = await apiJson(track(["machine-learning"], "data/ml-forecast.json"), { cache: "no-store" });
+    } catch {
+      status.textContent = "The daily Machine Learning job has not written its results yet (data/ml-forecast.json).";
+      return;
     }
-    return fixHour(parts, r.kuchera);
-  });
+  }
+  drawMachineLearning();
 }
 
-// The blend for every hour of `rows`: { swe, snow, parts: per model { member, swe, share, newestShare, weights },
-// fix: the same runs and weights with the elevation fix ({ swe, snow, rain }) }
-function betaBlend(rows, runs) {
-  const now = Date.now();
-  const pool = key => runs.filter(r => r.model.key === key);
-  return rows.map((r, lead) => {
-    const half = lerpAt(BETA_HALF_LIFE, lead), k = lerpAt(BETA_FRESH, lead);
-    const parts = [];
-    for (const member of BETA_MEMBERS) {
-      for (const key of member.pools) { // the first pool with runs that reach this hour
-        const have = pool(key).filter(run => run.swe.has(r.time));
-        if (!have.length) continue;
-        const ages = have.map(run => (now - run.init) / 3600000);
-        const w = ages.map(a => 0.5 ** (a / half));
-        const sum = w.reduce((a, b) => a + b, 0);
-        const newest = Math.min(...ages);
-        // The same runs and weights for the elevation fix: blended total water and wet-bulb temperature
-        const fixed = have.map((run, i) => ({ v: run.fix?.get(r.time), w: w[i] })).filter(x => x.v);
-        const fw = fixed.reduce((a, x) => a + x.w, 0);
-        parts.push({
-          member, source: key,
-          swe: have.reduce((a, run, i) => a + run.swe.get(r.time) * w[i], 0) / sum,
-          newestShare: w[ages.indexOf(newest)] / sum,
-          fresh: 0.5 ** (newest * k),
-          weights: have.map((run, i) => ({ run, w: w[i] / sum })),
-          fix: fw ? { water: fixed.reduce((a, x) => a + x.v.water * x.w, 0) / fw, tw: fixed.reduce((a, x) => a + x.v.tw * x.w, 0) / fw } : null,
-        });
-        break;
-      }
-    }
-    const F = parts.reduce((a, p) => a + p.fresh, 0);
-    const swe = parts.length ? parts.reduce((a, p) => a + p.swe * p.fresh, 0) / F : null;
-    parts.forEach(p => { p.share = p.fresh / F; });
-    const siteM = locations[0].elevation_ft * 0.3048;
-    const fix = fixHour(parts.filter(p => p.fix).map(p => ({ key: p.source, water: p.fix.water, tw: p.fix.tw,
-      fix: qpfFactor(p.source, siteM), w: p.fresh })), r.kuchera);
-    return { swe, snow: swe == null ? null : swe * r.kuchera, parts, fix };
-  });
+let mlPrecipLoading = null, mlEnsembleLoading = null;
+function drawMachineLearning() {
+  if (!mlData) return;
+  // The page's forecast point is known once main() has read locations.json; this draws again when it arrives
+  if (!mlPrecip && !mlPrecipLoading && locations.length) {
+    mlPrecipLoading = loadMlPrecip().then(drawMachineLearning)
+      .catch(err => console.warn("Model precipitation unavailable", err)).finally(() => { mlPrecipLoading = null; });
+  }
+  if (!mlEnsemble && !mlEnsembleLoading && locations.length) {
+    mlEnsembleLoading = loadMlEnsemble().then(drawMachineLearning)
+      .catch(err => console.warn("Ensembles unavailable", err)).finally(() => { mlEnsembleLoading = null; });
+  }
+  const status = document.getElementById("ml-status");
+  const updated = new Date(mlData.updated).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  status.textContent = `Last updated ${updated}.` + (modelData && mlPrecip ? "" : " Waiting for the models to load…");
+  drawMlLeads();
+  if (allRows.length && modelData && mlPrecip) drawMlUpcoming();
+  drawMlTracks();
+  drawMlCorrections();
+  drawMlCompare();
+  drawMlNotes();
 }
 
-// Opening the tab: loads the runs the first time (and again from its refresh button)
-function showBeta() {
-  if (!betaData) loadBeta();
-  else drawBeta();
-}
-async function loadBeta() {
-  const status = document.getElementById("beta-status");
-  if (!allRows.length) { betaWaiting = true; return; } // loadForecast() calls back once the forecast is in
-  status.textContent = "Loading the recent model runs…";
-  const loc = locations[0];
-  // Open-Meteo's own figure for how long after its start each model's latest run became available
-  const meta = Promise.all(BETA_MODELS.map(m => apiJson(`https://api.open-meteo.com/data/${m.id}/static/meta.json`)
-    .then(j => { m.delay = (j.last_run_availability_time - j.last_run_initialisation_time) / 3600; })
-    .catch(() => {}))); // the typical figure in BETA_MODELS stays
-  // What the daily learning job has found (scripts/learn_alta.py); null until it has run
-  const learning = apiJson(track(["beta"], "data/alta-learning.json"), { cache: "no-store" }).catch(() => null);
-  const [runs, live, learned] = await Promise.all([Promise.all(BETA_MODELS.map(m => betaRuns(m, loc))).then(r => r.flat()),
-    elevLive(loc), learning, meta]);
-  betaData = { runs, live, learning: learned, fetchedAt: Date.now() };
-  drawBeta();
+// Today's precipitation factor for one model at one lead day, or null when it is uncorrected
+function mlFactor(key, lead) {
+  const c = mlData.corrections[key]?.[lead]?.precip;
+  return c?.status === "ok" ? c.value : null;
 }
 
-function drawBeta() {
-  const status = document.getElementById("beta-status");
-  if (!betaData || !allRows.length) return;
+// Upcoming: today and the next fifteen days, for each step, from the live models
+function drawMlUpcoming() {
   const rows = allRows;
-  const hours = betaBlend(rows, betaData.runs);
-  if (!betaData.runs.length || hours.every(h => h.swe == null)) {
-    status.textContent = "The model run archive could not be reached right now. Try the refresh button in a few minutes.";
-    return;
-  }
-  const counts = BETA_MODELS.map(m => `${m.name} ${betaData.runs.filter(r => r.model === m).length}`).join(", ");
-  status.textContent = `Runs in use: ${counts}. Loaded ${new Date(betaData.fetchedAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}.`;
-
-  // The two versions with the elevation fix; their rain is the part of the water the fix makes rain
-  const fcFix = elevNewest(rows, betaData.live);
-  const asAvg = list => ({ snow: list.map(x => x.snow), swe: list.map(x => x.swe), rain: list.map(x => x.rain) });
-  // The learning can recommend any of the four Snow Summaries on this tab for a range of days
-  const main = averageSnow(rows);
-  drawLearning(rows, betaData.runs, betaData.learning, {
-    forecast_tab: { snow: main.snow, swe: main.swe },
-    beta: { snow: hours.map(h => h.snow), swe: hours.map(h => h.swe) },
-    fc_elev: asAvg(fcFix),
-    beta_elev: asAvg(hours.map(h => h.fix)),
-  });
-  summaryChart({ id: "beta", rows, history: snowHistory, avg: { snow: hours.map(h => h.snow), swe: hours.map(h => h.swe) } });
-  summaryChart({ id: "betafc-elev", rows, history: snowHistory, avg: asAvg(fcFix) });
-  summaryChart({ id: "beta-elev", rows, history: snowHistory, avg: asAvg(hours.map(h => h.fix)) });
-
-  drawBetaCompare(rows, [
-    { label: "Forecast tab", snow: averageSnow(rows).snow },
-    { label: "Beta", snow: hours.map(h => h.snow) },
-    { label: "Forecast tab + elevation fix", snow: fcFix.map(x => x.snow) },
-    { label: "Beta + elevation fix", snow: hours.map(h => h.fix.snow) },
-  ]);
-
-  // Hours gathered into the Snow Summary's days
-  const days = [];
-  hours.forEach((h, i) => {
-    const key = rows[i].time.slice(0, 10);
-    let d = days[days.length - 1];
-    if (!d || d.key !== key) days.push(d = { key, n: 0, share: {}, newest: {}, newestN: {} });
-    d.n += 1;
-    h.parts.forEach(p => {
-      d.share[p.member.key] = (d.share[p.member.key] || 0) + p.share;
-      d.newest[p.member.key] = (d.newest[p.member.key] || 0) + p.newestShare;
-      d.newestN[p.member.key] = (d.newestN[p.member.key] || 0) + 1;
-    });
-  });
-  const labels = days.map((d, i) => {
-    const date = new Date(d.key + "T12:00");
-    return [i === 0 ? "Today" : date.toLocaleDateString([], { weekday: "short" }), `${date.getMonth() + 1}/${date.getDate()}`];
-  });
-  const pct = v => `${Math.round(v * 100)}%`;
-  const barOptions = (stacked, yTitle) => ({
-    responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-    plugins: { legend: { labels: { boxWidth: 12 } },
-      tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y == null ? "–" : pct(ctx.parsed.y)}` } } },
-    scales: {
-      x: { stacked, grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0, font: { size: 10 } } },
-      y: { stacked, min: 0, max: 1, position: "right", title: { display: true, text: yTitle }, ticks: { callback: pct } },
-    },
-  });
-
-  makeChart("chart-beta-models", {
-    type: "bar",
-    data: { labels, datasets: BETA_MEMBERS.map(m => ({ label: m.name, backgroundColor: m.color,
-      data: days.map(d => (d.share[m.key] || 0) / d.n) })) },
-    options: barOptions(true, "share of the average"),
-  });
-  makeChart("chart-beta-newest", {
-    type: "line",
-    data: { labels, datasets: BETA_MEMBERS.map(m => ({ label: m.name, borderColor: m.color, backgroundColor: m.color,
-      borderWidth: 2, pointRadius: 3, spanGaps: false,
-      data: days.map(d => (d.newestN[m.key] ? d.newest[m.key] / d.newestN[m.key] : null)) })) },
-    options: barOptions(false, "newest run's share"),
-  });
-  drawBetaRuns(hours);
-}
-
-// ---- Learning (top of the Beta tab) ----
-// data/alta-learning.json, written each morning by scripts/learn_alta.py, holds for each forecast
-// range the approach that has forecast Collins's snow best so far: which version (the model's own
-// rain/snow split or the elevation fix), which runs (newest, or recent runs blended), the weight
-// of each model and a scale factor. The learned Snow Summary applies each day's approach to the
-// runs loaded for this tab, the same way the script built its forecasts.
-const LEARN_MEMBERS = { gfs: ["hrrr", "gfs"], nbm: ["nbm"], nam: ["nam"], ecmwf: ["ecmwf"] };
-const LEARN_NAMES = { gfs: "GFS + HRRR", nbm: "NBM", nam: "NAM", ecmwf: "ECMWF" };
-const LEARN_COLORS = { gfs: "#ff8a5c", nbm: "#ffd166", nam: "#6cc3ff", ecmwf: "#ff6fae" };
-// Used for a range until it has enough storms behind it: the Forecast tab's own average
-const EVEN_APPROACH = { label: "Forecast tab's Snow Summary", variant: "split", blend: "newest", exact: "forecast_tab",
-  weights: { gfs: 1 / 3, nbm: 1 / 3, nam: 1 / 3, ecmwf: 0 }, scale: 1 };
-let learnRange = 0; // the range picked under "What the learning has found"
-
-// One model's snow water for one hour, in the version and runs asked for; null where its runs do not reach
-function learnMemberValue(runs, pools, t, leadH, variant, blend) {
-  const now = Date.now(), siteM = locations[0].elevation_ft * 0.3048, half = lerpAt(BETA_HALF_LIFE, leadH);
-  for (const key of pools) {
-    const have = runs.filter(run => run.model.key === key && run.swe.has(t));
-    if (!have.length) continue;
-    const value = run => {
-      if (variant === "split") return run.swe.get(t);
-      const f = run.fix?.get(t);
-      return f ? f.water * qpfFactor(key, siteM) * snowShare(f.tw) : null;
-    };
-    const ages = have.map(run => (now - run.init) / 3600000);
-    if (blend === "newest") return value(have[ages.indexOf(Math.min(...ages))]);
-    let sum = 0, wsum = 0;
-    have.forEach((run, i) => { const v = value(run); if (v != null) { const w = 0.5 ** (ages[i] / half); sum += v * w; wsum += w; } });
-    return wsum ? sum / wsum : null;
-  }
-  return null;
-}
-
-// The approach for a forecast day (1 = today) and the range it belongs to
-function learnApproach(learning, day) {
-  const bucket = learning?.buckets?.find(b => day >= b.days[0] && day <= b.days[1]);
-  const cand = bucket?.candidates.find(c => c.label === bucket.recommended);
-  return { bucket, approach: cand ?? EVEN_APPROACH };
-}
-
-// `exact` holds this tab's four Snow Summaries ({ snow, swe } per row), used as they are when the
-// approach recommended for a day is one of them
-function drawLearning(rows, runs, learning, exact = {}) {
   const today = rows[0].time.slice(0, 10);
-  const dayOf = t => Math.round((new Date(t.slice(0, 10) + "T12:00") - new Date(today + "T12:00")) / 86400000) + 1;
-  const pct = v => `${Math.round(v * 100)}%`;
-  const when = iso => new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const leadOf = t => Math.round((new Date(t.slice(0, 10) + "T12:00") - new Date(today + "T12:00")) / 86400000);
+  // The NBM's snowfall is not at 7 to 1 (its snowfall ÷ 7 has run about twice its precipitation),
+  // so on this tab every model's snow water is capped at its own precipitation, snow scaled to match.
+  // ml_forecast/forecasts.py does the same in the test, so every step here is on the same footing.
+  const series = modelSeries(rows).map(s => {
+    const p = mlPrecip.get(s.id);
+    if (!p || !ML_MODEL_KEYS[s.id]) return s;
+    const keep = rows.map((r, i) => { const w = s.swe[i], cap = p.get(r.time); return w > 0 && cap != null && w > cap ? cap / w : 1; });
+    return { ...s, swe: s.swe.map((v, i) => (v == null ? v : v * keep[i])), snow: s.snow.map((v, i) => (v == null ? v : v * keep[i])) };
+  });
+  const corrected = series.map(s => {
+    const key = ML_MODEL_KEYS[s.id];
+    if (!key) return s;
+    const f = rows.map(r => mlFactor(key, leadOf(r.time)));
+    const scale = arr => arr.map((v, i) => (v == null || f[i] == null ? v : v * f[i]));
+    return { ...s, snow: scale(s.snow), swe: scale(s.swe) };
+  });
+  const nbm = series.find(s => s.id === "ncep_nbm_conus");
+  const hourly = { "0a": averageSnow(rows, series), "0b": nbm && { snow: nbm.snow, swe: nbm.swe }, "1": averageSnow(rows, corrected) };
 
-  // The learned Snow Summary: each hour's day picks its approach, and the snow ratio is Kuchera's
-  // times the learned correction for that hour's forecast temperature. Each model's own snow, in
-  // that version, is kept too for the snowfall-by-model chart.
-  const snow = [], swe = [];
-  const byModel = Object.fromEntries(Object.keys(LEARN_MEMBERS).map(m => [m, []]));
+  // Days 12–16: the ensemble outlook takes the place of Step 1 (see ML_ENSEMBLES), hour by hour
+  const outlook = rows.map(r => {
+    if (!mlEnsemble || leadOf(r.time) < ML_OUTLOOK_FROM) return null;
+    let sum = 0, weight = 0;
+    for (const e of ML_ENSEMBLES) {
+      const v = mlEnsemble.get(e.ending)?.get(r.time);
+      if (v != null) { sum += v * e.weight; weight += e.weight; }
+    }
+    return weight ? sum / weight : null;
+  });
+  hourly["1"] = {
+    swe: hourly["1"].swe.map((v, i) => outlook[i] ?? v),
+    snow: hourly["1"].snow.map((v, i) => (outlook[i] == null ? v : outlook[i] * rows[i].kuchera)),
+  };
+
+  // Day totals; for Step 1, whether every model in that day's average was corrected, or the day is the outlook
+  const days = new Map();
   rows.forEach((r, i) => {
-    const { approach: a } = learnApproach(learning, dayOf(r.time));
-    const ratio = r.kuchera * ratioCorrection(learning, r.temp);
-    let s = 0, w = 0;
-    for (const [m, pools] of Object.entries(LEARN_MEMBERS)) {
-      const v = learnMemberValue(runs, pools, r.time, i, a.variant, a.blend);
-      byModel[m].push(v == null ? null : v * ratio);
-      if (v == null || !(a.weights[m] > 0)) continue;
-      s += a.weights[m] * v; w += a.weights[m];
+    const k = r.time.slice(0, 10);
+    if (!days.has(k)) days.set(k, { lead: leadOf(r.time), models: new Set(), outlook: false,
+      "0a": 0, "0b": 0, "1": 0, swe: { "0a": 0, "0b": 0, "1": 0 } });
+    const d = days.get(k);
+    for (const step in hourly) {
+      d[step] += hourly[step]?.snow[i] || 0;
+      d.swe[step] += hourly[step]?.swe[i] || 0;
     }
-    const own = a.exact && exact[a.exact];
-    const water = own ? own.swe[i] : w ? (s / w) * a.scale : null;
-    swe.push(water); snow.push(water == null ? null : water * ratio);
+    if (outlook[i] != null) d.outlook = true;
+    series.forEach(s => { if (ML_MODEL_KEYS[s.id] && s.swe[i] != null) d.models.add(ML_MODEL_KEYS[s.id]); });
   });
-  summaryChart({ id: "learned", rows, history: snowHistory, avg: { snow, swe } });
+  const keys = [...days.keys()].slice(0, 16);
+  const state = keys.map(k => {
+    const d = days.get(k);
+    if (d.outlook) return "ensemble outlook";
+    const fixed = [...d.models].filter(m => mlFactor(m, d.lead) != null).length;
+    return fixed === 0 ? "uncorrected" : fixed < d.models.size ? "partly corrected" : "corrected";
+  });
+  const stateMark = { "uncorrected": "uncorr.", "partly corrected": "partly", "ensemble outlook": "outlook" };
+  const top = Math.max(1, ...keys.flatMap(k => ["0a", "0b", "1"].map(s => days.get(k)[s])));
+  const yMax = Math.ceil(top * 1.25);
 
-  // Snowfall by model: each model's running total from now, and the learned blend's
-  const labels = rows.map(r => r.time);
-  const o = {
-    responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-    plugins: { legend: { labels: { boxWidth: 12 } },
-      tooltip: { itemSort: (x, y) => y.parsed.y - x.parsed.y,
-        callbacks: { title: items => new Date(items[0].label).toLocaleString([], { weekday: "short", month: "numeric", day: "numeric", hour: "numeric" }),
-          label: ctx => `${ctx.dataset.label}: ${r1(ctx.parsed.y)}"` } } },
-    scales: {
-      x: { ticks: { autoSkip: false, maxRotation: 0, font: { size: 10 },
-        callback(v, i) { return axisLabel(labels[i], 24, this.width / labels.length); } }, grid: { display: false } },
-      y: { beginAtZero: true, position: "right", title: { display: true, text: "total snow (in)" } },
-    },
+  // Where each day's snow comes from, as [long, short] labels for the brackets above the bars
+  const NAMES = { gfs: ["GFS + HRRR", "GFS"], nbm: ["NBM", "NBM"], nam: ["NAM", "NAM"] };
+  const sourceOf = (step, i) => {
+    const d = days.get(keys[i]);
+    const models = ["gfs", "nbm", "nam"].filter(m => d.models.has(m));
+    const list = n => models.map(m => NAMES[m][n]).join(", ");
+    if (step === "0b") return d.models.has("nbm") ? ["NBM alone", "NBM"] : null;
+    if (step === "1" && state[i] === "ensemble outlook") return ["GFS ensemble (31 runs) · not bias-corrected", "GFS ens."];
+    if (!models.length) return null;
+    const kind = step === "0a" ? "Plain average" : d.lead <= 7 ? "Corrected average" : "Uncorrected average";
+    const one = models.length === 1;
+    const alone = step === "0a" ? `${list(0)} alone` : `${kind.split(" ")[0]} ${list(0)} alone`;
+    return [one ? alone : `${kind} of ${list(0)}`,
+      step === "0a" ? list(1) : `${d.lead <= 7 ? "Corr." : "Uncorr."} ${list(1)}`];
   };
-  makeChart("chart-learned-models", {
-    type: "line",
-    data: { labels, datasets: [
-      ...Object.keys(LEARN_MEMBERS).filter(m => byModel[m].some(v => v != null)).map(m => ({
-        label: LEARN_NAMES[m], data: cumulative(byModel[m]), borderColor: LEARN_COLORS[m], backgroundColor: LEARN_COLORS[m],
-        borderWidth: 1.5, pointRadius: 0, order: 1 })),
-      { label: "Learned blend", data: cumulative(snow), borderColor: "#ffffff", backgroundColor: "#ffffff", borderWidth: 3, pointRadius: 0, order: 0 },
-    ] },
-    options: o,
-  });
-  const total = snow.reduce((a, v) => a + (v || 0), 0);
-  document.getElementById("learned-note").textContent = `Next 16 days: ${r1(total)}". ` +
-    (learning ? `Approaches learned ${when(learning.updated)}.` : "No learning yet, so every day uses the Forecast tab's average.");
 
-  // The summary at the top, and the recommendation for each of the next 16 days
-  const summary = document.getElementById("learn-summary");
-  const dayTable = document.getElementById("learn-days");
-  const members = Object.keys(LEARN_MEMBERS);
-  if (!learning?.buckets) {
-    summary.innerHTML = `<p class="muted">The daily learning job has not written its results yet (data/alta-learning.json). ` +
-      `Until it has, every day uses an even average of the models.</p>`;
-  } else {
-    // One line per range: what is used, and while there are too few storms, what leads so far
-    const describe = c => {
-      const ws = members.filter(m => c.weights[m] > 0.005).map(m => `${LEARN_NAMES[m]} ${pct(c.weights[m])}`).join(", ");
-      return `${c.label} (${ws}${Math.abs((c.scale ?? 1) - 1) >= 0.01 ? `, scaled ×${c.scale.toFixed(2)}` : ""})`;
-    };
-    const lines = learning.buckets.map(b => {
-      const { approach: a } = learnApproach(learning, b.days[0]);
-      if (b.enough) {
-        return `<li><b>${b.name}:</b> ${describe(a)}. Typical miss ${r1(a.mae)}" a day, against ${r1(b.baseline_mae)}" for the Forecast tab's average.</li>`;
-      }
-      const lead = b.candidates.find(c => c.label === b.leading);
-      return `<li><b>${b.name}:</b> the Forecast tab's average for now: ${b.snow_days ?? 0} of the ${learning.settings?.min_snow_days ?? 4} days with measured snow it needs.` +
-        (lead && lead.label !== b.recommended ? ` <span class="muted">Leading so far: ${describe(lead)}, typical miss ${r1(lead.mae)}" against ${r1(b.baseline_mae)}".</span>` : "") + `</li>`;
-    }).join("");
-    summary.innerHTML = `<p>Learning from <b>${learning.samples}</b> forecast days with snow, checked against <b>${learning.measured_days}</b> days ` +
-      `measured at Collins since ${learning.first_measured ?? "–"} (${learning.storm_days} of them with snow). Updated ${when(learning.updated)}.</p><ul>${lines}</ul>`;
+  for (const step of ["0a", "0b", "1"]) {
+    const vals = keys.map(k => days.get(k)[step]);
+    const colour = keys.map((k, i) => {
+      const d = days.get(k), ratio = d.swe[step] > 0.001 ? d[step] / d.swe[step] : null;
+      const c = ratioColor(ratio ?? 12);
+      if (step !== "1") return c;
+      // The Snow Summary's blues throughout: a little see-through on the outlook, more where not fully corrected
+      return state[i] === "ensemble outlook" ? c + "aa" : state[i] !== "corrected" ? c + "66" : c;
+    });
+    // The outlook days also get a thin outline in their own colour, so they never pass for corrected days
+    const outlined = state.map(s => step === "1" && s === "ensemble outlook");
+    const label = step === "1" ? i => (state[i] === "ensemble outlook" ? "GFS ensemble outlook" : ML_STEPS[step].name) : () => ML_STEPS[step].name;
+    const datasets = [{ label: ML_STEPS[step].name, data: vals, backgroundColor: colour, order: 1, grouped: false, labelAt: label,
+      borderColor: outlined.map(o => (o ? ML_OUTLOOK_COLOR : "transparent")), borderWidth: outlined.map(o => (o ? 1.5 : 0)), borderSkipped: false }];
+    if (step !== "0a") datasets.push({ label: "Plain average", data: keys.map(k => days.get(k)["0a"]), backgroundColor: ML_GHOST,
+      order: 2, grouped: false, barPercentage: 1, categoryPercentage: 0.95 });
+    const labels = keys.map((k, i) => {
+      const date = new Date(k + "T12:00");
+      const lines = [i === 0 ? "Today" : date.toLocaleDateString([], { weekday: "short" }), `${date.getMonth() + 1}/${date.getDate()}`];
+      if (step === "1" && state[i] !== "corrected") lines.push(stateMark[state[i]]);
+      return lines;
+    });
+    // Runs of back-to-back days with the same source, each bracketed and named above its bars
+    const sources = keys.map((_, i) => sourceOf(step, i));
+    const sections = [];
+    sources.forEach((s, i) => {
+      const last = sections[sections.length - 1];
+      if (last && s && last.labels[0] === s[0]) last.to = i;
+      else if (s) sections.push({ from: i, to: i, labels: s });
+    });
+    // Storm totals, found the same way as on every Snow Summary (stormRuns)
+    const md = k => { const d = new Date(k + "T12:00"); return `${d.getMonth() + 1}/${d.getDate()}`; };
+    const storms = stormRuns(vals, 0.05, SNOW_LULL_IN).map(([from, to]) => {
+      const total = r1(vals.slice(from, to + 1).reduce((a, b) => a + b, 0));
+      const range = from === to ? md(keys[from]) : `${md(keys[from])}–${md(keys[to])}`;
+      return { from, to, labels: [`Storm ${range}: ${total}"`, `${total}"`] };
+    });
+    makeChart(`chart-ml-up-${step}`, {
+      type: "bar",
+      data: { labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+        layout: { padding: { top: 56 } }, // room for the source brackets and storm totals
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: {
+            title: items => new Date(keys[items[0].dataIndex] + "T12:00").toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }),
+            label: ctx => `${ctx.dataset.labelAt ? ctx.dataset.labelAt(ctx.dataIndex) : ctx.dataset.label}: ${r1(ctx.parsed.y)}"`,
+            footer: items => {
+              const i = items[0].dataIndex, from = sources[i] ? `From: ${sources[i][0]}` : "";
+              return step === "1" && state[i] !== "ensemble outlook" ? [from, `Step 1 on this day: ${state[i]}`] : from;
+            },
+          } },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0, font: { size: 11 } } },
+          y: { beginAtZero: true, max: yMax, position: "right", title: { display: true, text: "inches of snow" } },
+        },
+      },
+      plugins: [valueLabels(v => r1(v), 0.05), mlBrackets("mlSources", sections, 38),
+        mlBrackets("mlStorms", storms, 10, { font: "700 11px", text: "#e6edf5", line: "rgba(159, 216, 255, 0.6)" })],
+    });
+    const week = vals.slice(0, 7).reduce((a, b) => a + b, 0);
+    const later = vals.reduce((a, v, i) => a + (state[i] === "ensemble outlook" ? v : 0), 0);
+    document.getElementById(`ml-total-${step}`).textContent = `· next 7 days ${r1(week)}"` +
+      (step === "1" && state.includes("ensemble outlook") ? ` · Days 12–16 GFS ensemble ${r1(later)}"` : "");
   }
-  const dates = [...new Set(rows.map(r => r.time.slice(0, 10)))].slice(0, 16);
-  dayTable.querySelector("thead").innerHTML = `<tr><th>Day</th><th>Range</th><th>Approach</th>${members.map(m => `<th>${LEARN_NAMES[m]}</th>`).join("")}<th>Scale</th><th>Typical miss</th><th>Forecast tab's miss</th></tr>`;
-  dayTable.querySelector("tbody").innerHTML = dates.map((d, i) => {
-    const { bucket: b, approach: a } = learnApproach(learning, i + 1);
-    const date = new Date(d + "T12:00");
-    const label = i === 0 ? "Today" : `${date.toLocaleDateString([], { weekday: "short" })} ${date.getMonth() + 1}/${date.getDate()}`;
-    const used = b?.enough ? a : EVEN_APPROACH;
-    return `<tr${b?.enough ? "" : ' class="muted"'}><td>${label}</td><td>${b?.name ?? "–"}</td>
-      <td>${b?.enough ? used.label : `Forecast tab's average (${b?.snow_days ?? 0} of ${learning?.settings?.min_snow_days ?? 4} snow days needed)`}</td>
-      ${members.map(m => `<td>${used.weights[m] > 0.005 ? pct(used.weights[m]) : "–"}</td>`).join("")}
-      <td>×${(used.scale ?? 1).toFixed(2)}</td><td>${b?.enough && a.mae != null ? `${r1(a.mae)}"` : "–"}</td>
-      <td>${b?.baseline_mae != null ? `${r1(b.baseline_mae)}"` : "–"}</td></tr>`;
-  }).join("");
-
-  drawLearningHistory(learning);
-  drawRatio(learning);
 }
 
-// The learned snow ratio correction for a forecast temperature (°F) at Collins; ×1 before any learning
-function ratioCorrection(learning, tempF) {
-  const bands = learning?.ratio?.bands;
-  if (!bands || tempF == null) return 1;
-  const b = bands.find(x => tempF >= x.from_f && tempF < x.to_f);
-  return b?.factor ?? 1;
-}
+// Brackets across the top of an upcoming chart, `rise` px above the plot: one row names where
+// each run of days' snow comes from, a lower row gives each storm's total. Each bracket gets the
+// longest of its labels that fits (none if even the shortest doesn't; the tooltip still says).
+// `sections` are { from, to, labels: [long, short] } with from/to as bar positions.
+const mlBrackets = (id, sections, rise, { font = "600 10px", text = "#c9d4e2", line = "rgba(201, 212, 226, 0.45)" } = {}) => ({
+  id,
+  afterDatasetsDraw(chart) {
+    const { ctx: g, chartArea: area, scales: { x } } = chart;
+    const half = chart.data.labels.length > 1 ? (x.getPixelForValue(1) - x.getPixelForValue(0)) / 2 : 20;
+    const y = area.top - rise;
+    g.save();
+    g.font = `${font} ${Chart.defaults.font.family}`;
+    g.textAlign = "center";
+    g.textBaseline = "bottom";
+    g.strokeStyle = line;
+    g.lineWidth = 1;
+    for (const s of sections) {
+      const left = x.getPixelForValue(s.from) - half + 3, right = x.getPixelForValue(s.to) + half - 3;
+      g.beginPath();
+      g.moveTo(left, y + 5); g.lineTo(left, y); g.lineTo(right, y); g.lineTo(right, y + 5);
+      g.stroke();
+      const label = s.labels.find(t => g.measureText(t).width <= right - left);
+      if (label) { g.fillStyle = text; g.fillText(label, (left + right) / 2, y - 2); }
+    }
+    g.restore();
+  },
+});
 
-// The Learned snow ratio card: each temperature band's correction, each snowy day's real ratio
-// against Kuchera's, and the corrections day by day
-function drawRatio(learning) {
-  const r = learning?.ratio;
-  const summary = document.getElementById("ratio-summary");
-  const table = document.getElementById("ratio-bands");
-  if (!r) {
-    summary.innerHTML = '<p class="muted">The daily learning job has not worked out a snow ratio yet, so plain Kuchera ratios are used.</p>';
-    table.querySelector("thead").innerHTML = table.querySelector("tbody").innerHTML = "";
-    return;
-  }
-  const range = b => b.from_f <= -50 ? `below ${b.to_f} °F` : b.to_f >= 50 ? `${b.from_f} °F and up` : `${b.from_f}–${b.to_f} °F`;
-  const learned = r.bands.filter(b => b.days);
-  summary.innerHTML = `<p>${r.days.length} snowy day${r.days.length === 1 ? "" : "s"} at Collins so far could show the real snow ratio. ` +
-    (learned.length ? learned.map(b => `<b>${b.name}</b> (${range(b)}): Kuchera averaged ${b.kuchera_avg}:1, Collins measured ${b.measured_avg}:1, ` +
-      `so the learned Snow Summary uses Kuchera ×${b.factor.toFixed(2)}${b.days < r.prior_days ? " for now (held near ×1 until more days)" : ""}.`).join(" ")
-      : "None yet, so plain Kuchera ratios are used.") + "</p>";
-  table.querySelector("thead").innerHTML = "<tr><th>Temperature</th><th>Correction</th><th>Days</th><th>Kuchera avg</th><th>Measured avg</th><th>Snow miss, Kuchera</th><th>Snow miss, learned</th></tr>";
-  table.querySelector("tbody").innerHTML = r.bands.map(b => `<tr${b.days ? "" : ' class="muted"'}>
-      <td>${b.name} (${range(b)})</td><td>×${b.factor.toFixed(2)}</td><td>${b.days}</td>
-      <td>${b.kuchera_avg != null ? `${b.kuchera_avg}:1` : "–"}</td><td>${b.measured_avg != null ? `${b.measured_avg}:1` : "–"}</td>
-      <td>${b.miss_kuchera != null ? `${r1(b.miss_kuchera)}"` : "–"}</td><td>${b.miss_learned != null ? `${r1(b.miss_learned)}"` : "–"}</td></tr>`).join("");
-
-  const md = d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
-  const opts = (yTitle, tick) => ({
-    responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-    plugins: { legend: { labels: { boxWidth: 12 } } },
-    scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, font: { size: 10 } } },
-      y: { beginAtZero: true, position: "right", title: { display: true, text: yTitle }, ticks: { callback: tick } } },
-  });
-  makeChart("chart-ratio-days", {
-    type: "bar",
-    data: { labels: r.days.map(d => [md(d.date), `${Math.round(d.temp_f)}°F`]), datasets: [
-      { label: "Kuchera", data: r.days.map(d => d.kuchera), backgroundColor: "#8b9bb0" },
-      { label: "Measured at Collins", data: r.days.map(d => d.measured), backgroundColor: "#9fd8ff" },
-    ] },
-    options: opts("inches of snow per inch of water", v => `${v}:1`),
-  });
-  const history = (learning.history ?? []).filter(h => h.ratio);
-  const colors = ["#ff7a5c", "#9fd8ff", "#c9a6ff"];
-  makeChart("chart-ratio-history", {
-    type: "line",
-    data: { labels: history.map(h => md(h.date)), datasets: r.bands.map((b, i) => ({
-      label: b.name, data: history.map(h => h.ratio[b.name] ?? null), borderColor: colors[i % 3], backgroundColor: colors[i % 3],
-      borderWidth: 2, pointRadius: 3 })) },
-    options: opts("correction to Kuchera", v => `×${v}`),
-  });
-}
-
-// Over time, for the range picked: the weights recommended each day, and the recommended approach's
-// typical miss against the Forecast tab's; then every approach tried for the range, best first
-function drawLearningHistory(learning) {
-  const bar = document.getElementById("learn-ranges");
-  const buckets = learning?.buckets ?? [];
-  learnRange = Math.min(learnRange, Math.max(0, buckets.length - 1));
-  bar.innerHTML = '<span class="muted small">Range</span>' + buckets.map((b, i) =>
-    `<button type="button" class="range-btn${i === learnRange ? " active" : ""}" data-range="${i}" aria-pressed="${i === learnRange}">${b.name}</button>`).join("");
+// The lead day picker above the track records
+function drawMlLeads() {
+  const bar = document.getElementById("ml-leads");
+  bar.innerHTML = mlData.leads.map(l => `<button type="button" class="range-btn${l === mlLead ? " active" : ""}" ` +
+    `data-lead="${l}" aria-pressed="${l === mlLead}">${l === 0 ? "the same day" : l === 1 ? "1 day ahead" : `${l} days ahead`}</button>`).join("");
   bar.onclick = e => {
-    const btn = e.target.closest("[data-range]");
+    const btn = e.target.closest("[data-lead]");
     if (!btn) return;
-    learnRange = Number(btn.dataset.range);
-    drawLearningHistory(learning);
+    mlLead = Number(btn.dataset.lead);
+    drawMlLeads();
+    drawMlTracks();
   };
-  const b = buckets[learnRange];
-  const history = (learning?.history ?? []).filter(h => h.buckets?.[b?.name]);
-  const labels = history.map(h => { const d = new Date(h.date + "T12:00"); return `${d.getMonth() + 1}/${d.getDate()}`; });
-  const members = Object.keys(LEARN_MEMBERS);
-  const opts = (stacked, yTitle, tick) => ({
-    responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-    plugins: { legend: { labels: { boxWidth: 12 } } },
-    scales: { x: { stacked, grid: { display: false }, ticks: { maxRotation: 0, font: { size: 10 } } },
-      y: { stacked, beginAtZero: true, ...(stacked ? { max: 1 } : {}), position: "right", title: { display: true, text: yTitle },
-        ticks: { callback: tick } } },
-  });
-  makeChart("chart-learn-weights", {
-    type: "bar",
-    data: { labels, datasets: members.map(m => ({ label: LEARN_NAMES[m], backgroundColor: LEARN_COLORS[m],
-      data: history.map(h => h.buckets[b.name].weights?.[m] ?? 0) })) },
-    options: opts(true, "weight", v => `${Math.round(v * 100)}%`),
-  });
-  makeChart("chart-learn-miss", {
-    type: "line",
-    data: { labels, datasets: [
-      { label: "Recommended approach", data: history.map(h => h.buckets[b.name].mae), borderColor: "#9fd8ff", backgroundColor: "#9fd8ff", borderWidth: 2, pointRadius: 3 },
-      { label: "Forecast tab's even average", data: history.map(h => h.buckets[b.name].baseline_mae), borderColor: "#8b9bb0", backgroundColor: "#8b9bb0", borderWidth: 2, borderDash: [5, 4], pointRadius: 3 },
-    ] },
-    options: opts(false, "typical miss per day (inches)", v => `${v}"`),
-  });
-  const table = document.getElementById("learn-scores");
-  table.querySelector("thead").innerHTML = `<tr><th>Approach</th><th>Typical miss</th><th>Days scored</th>${members.map(m => `<th>${LEARN_NAMES[m]}</th>`).join("")}<th>Scale</th></tr>`;
-  const cands = [...(b?.candidates ?? [])].sort((x, y) => (x.mae ?? Infinity) - (y.mae ?? Infinity));
-  table.querySelector("tbody").innerHTML = cands.length ? cands.map(c => `<tr${c.label === (b.enough ? b.recommended : b.leading) ? ' class="learn-pick"' : ""}>
-      <td>${c.label}</td><td>${c.mae == null ? "–" : `${r1(c.mae)}"`}</td><td>${c.n}</td>
-      ${members.map(m => `<td>${c.weights[m] > 0.005 ? `${Math.round(c.weights[m] * 100)}%` : "–"}</td>`).join("")}
-      <td>×${(c.scale ?? 1).toFixed(2)}</td></tr>`).join("")
-    : `<tr><td colspan="${4 + members.length}" class="muted">Nothing scored yet.</td></tr>`;
 }
 
-// The table comparing the Snow Summaries: each version's snow for the next storm, the next 5 days,
-// days 6–10 and 10–15, and the next 7, 15 and 16 days, all counted from the current hour.
-// `versions` are [{ label, snow }], the first (the Forecast tab) being the one the others are
-// compared with. The next storm is the first run of back-to-back days, from today on, with at
-// least 0.05" a day in any version (the Snow Summary's rule), so all are compared over the same
-// days; for a storm under way, only what is still to come counts.
-function drawBetaCompare(rows, versions) {
-  const daily = vals => {
-    const m = new Map();
-    rows.forEach((r, i) => { const k = r.time.slice(0, 10); m.set(k, (m.get(k) || 0) + (vals[i] || 0)); });
-    return m;
+// Track record: each step's forecast against the snow measured on the Collins board, over the
+// most recent winter the test covers, at the chosen lead day. All three share one scale.
+function drawMlTracks() {
+  const t = mlData.track;
+  const lead = t.leads?.[mlLead];
+  if (!lead) return;
+  const n = t.dates.length;
+  const ok = i => t.observed[i] != null && ["0a", "0b", "1"].every(s => lead[s][i] != null); // the days every step is scored on
+  const top = Math.max(1, ...t.observed.filter(v => v != null), ...["0a", "0b", "1"].flatMap(s => lead[s].filter(v => v != null)));
+  const mae = s => {
+    const idx = [...Array(n).keys()].filter(ok);
+    return idx.length ? idx.reduce((a, i) => a + Math.abs(lead[s][i] - t.observed[i]), 0) / idx.length : null;
   };
-  const byDay = versions.map(v => daily(v.snow));
-  const days = [...byDay[0].keys()];
-  let from = -1, to = -1;
-  for (let i = 0; i < days.length; i++) {
-    const wet = Math.max(...byDay.map(d => d.get(days[i]) || 0)) >= 0.05;
-    if (wet && from < 0) from = i;
-    if (!wet && from >= 0) break;
-    if (wet) to = i;
+  const base = mae("0a");
+  for (const step of ["0a", "0b", "1"]) {
+    const scroller = document.getElementById(`ml-track-${step}-scroll`);
+    if (scroller.clientWidth) document.getElementById(`ml-track-${step}-inner`).style.width = `${Math.max(scroller.clientWidth, n * 6)}px`;
+    makeChart(`chart-ml-track-${step}`, {
+      type: "bar",
+      data: {
+        labels: t.dates,
+        datasets: [
+          { type: "line", label: `${ML_STEPS[step].name}, forecast ${mlLead} day${mlLead === 1 ? "" : "s"} ahead`, data: lead[step],
+            borderColor: ML_STEPS[step].line, backgroundColor: ML_STEPS[step].line, borderWidth: 1.5, pointRadius: 0, spanGaps: false, order: 1 },
+          { label: "Measured at Mid Collins", data: t.observed, backgroundColor: "#8b9bb0", order: 2, barPercentage: 1, categoryPercentage: 0.9 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "top", align: "start", labels: { boxWidth: 12 } },
+          tooltip: { callbacks: {
+            title: items => new Date(t.dates[items[0].dataIndex] + "T12:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" }),
+            label: ctx => `${ctx.dataset.label}: ${r1(ctx.parsed.y)}"`,
+          } },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0, font: { size: 11 },
+            callback(v) { const d = t.dates[v]; return d?.endsWith("-01") ? new Date(d + "T12:00").toLocaleDateString([], { month: "short" }) : ""; } } },
+          y: { beginAtZero: true, max: Math.ceil(top * 1.1), position: "right", title: { display: true, text: "inches of snow" } },
+        },
+      },
+    });
+    const m = mae(step);
+    const days = [...Array(n).keys()].filter(ok);
+    const total = arr => days.reduce((a, i) => a + arr[i], 0);
+    const skill = step === "0a" || !base ? "the yardstick for the other steps" : `skill ${m <= base ? "+" : ""}${Math.round((1 - m / base) * 100)}% against the plain average`;
+    document.getElementById(`ml-score-${step}`).textContent = days.length
+      ? `Winter ${t.winter}, forecasts made ${mlLead === 0 ? "the same day" : `${mlLead} day${mlLead === 1 ? "" : "s"} ahead`}, ${days.length} days: ` +
+        `average miss (MAE) ${r2(m)}" a day, ${skill}. Winter total ${r0(total(lead[step]))}" forecast, ${r0(total(t.observed))}" measured.`
+      : "No days to score at this lead day yet.";
   }
-  const md = k => `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}`;
-  const total = (vals, keep) => rows.reduce((a, r, i) => a + (keep(r, i) ? vals[i] || 0 : 0), 0);
-  const periods = [];
-  if (from >= 0) {
-    const inStorm = r => r.time.slice(0, 10) >= days[from] && r.time.slice(0, 10) <= days[to];
-    periods.push({ label: `Next storm, ${from === to ? md(days[from]) : `${md(days[from])}–${md(days[to])}`}`, keep: inStorm });
-  } else {
-    periods.push({ label: "Next storm", none: true });
-  }
-  // Hours from now: day 5 ends 120 h ahead, day 10 at 240 h, day 15 at 360 h
-  const span = (a, b) => (r, i) => i >= a * 24 && i < b * 24;
-  periods.push(
-    { label: "Next 5 days", keep: span(0, 5) },
-    { label: "Days 6–10", keep: span(5, 10) },
-    { label: "Days 10–15", keep: span(10, 15) },
-    { label: "Next 7 days", keep: span(0, 7) },
-    { label: "Next 15 days", keep: span(0, 15) },
-    { label: "Next 16 days", keep: () => true },
-  );
+}
 
-  const table = document.getElementById("beta-compare");
-  table.querySelector("thead").innerHTML = `<tr><th>Period</th>${versions.map(v => `<th>${v.label}</th>`).join("")}</tr>`;
-  table.querySelector("tbody").innerHTML = periods.map(p => {
-    if (p.none) return `<tr><td>${p.label}</td><td colspan="${versions.length}" class="muted">No snow in the next 16 days in any version</td></tr>`;
-    const base = total(versions[0].snow, p.keep);
-    // Each other version: its total, and underneath how far it is from the Forecast tab
-    return `<tr><td>${p.label}</td><td>${r1(base)}"</td>${versions.slice(1).map(v => {
-      const t = total(v.snow, p.keep), d = t - base;
-      const pct = base >= 0.1 ? ` (${d >= 0 ? "+" : ""}${Math.round(d / base * 100)}%)` : "";
-      return `<td><b>${r1(t)}"</b><span class="diff ${Math.abs(d) < 0.05 ? "muted" : d > 0 ? "beta-more" : "beta-less"}">` +
-        `${d >= 0 ? "+" : "−"}${r1(Math.abs(d))}"${pct}</span></td>`;
-    }).join("")}</tr>`;
+// Today's corrections, in words
+function drawMlCorrections() {
+  const table = document.getElementById("ml-corrections");
+  const flag = text => `<span class="ml-flag">Not corrected</span> <span class="muted">${text}</span>`;
+  const why = (c, unit) => (c.status === "no_history" ? "no forecast history at this lead day"
+    : `only ${c.n} ${unit} of the ${c.needs} it needs`);
+  const ratioWords = (c, more, less, unit) => {
+    if (c.status !== "ok") return flag(why(c, unit));
+    const f = c.value;
+    const limit = f <= mlData.settings.RATIO_CLIP[0] || f >= mlData.settings.RATIO_CLIP[1] ? " (the limit)" : "";
+    if (Math.abs(f - 1) < 0.03) return `about right → leaving it (×${f.toFixed(2)})`;
+    const pct = f > 1 ? Math.round((1 - 1 / f) * 100) : Math.round((1 / f - 1) * 100);
+    return `forecasting ${pct}% ${f > 1 ? less : more} → multiplying by ${f.toFixed(2)}${limit}`;
+  };
+  const tempWords = c => {
+    if (c.status !== "ok") return flag(why(c, "days"));
+    const v = c.value;
+    if (Math.abs(v) < 0.3) return `about right → leaving it (${v >= 0 ? "+" : ""}${v.toFixed(1)} °F)`;
+    return `${Math.abs(v).toFixed(1)} °F too ${v > 0 ? "cold" : "warm"} → ${v > 0 ? "adding" : "subtracting"} ${Math.abs(v).toFixed(1)} °F`;
+  };
+  table.querySelector("thead").innerHTML = "<tr><th>Model</th><th>Lead day</th><th>Precipitation (snow)</th><th>Temperature</th><th>Wind</th></tr>";
+  const rows = [];
+  for (const [key, model] of Object.entries(mlData.models)) {
+    // The NAM's live forecast reaches Day 2, so it is listed to there; the others to Day 7
+    const shown = mlData.leads.filter(l => key !== "nam" || l <= 2);
+    shown.forEach(l => {
+      const e = mlData.corrections[key][l];
+      rows.push(`<tr><td>${model.name}</td><td>${mlDayName(l)}</td>
+        <td>${ratioWords(e.precip, "too much precipitation", "too little precipitation", "wet days")}</td>
+        <td>${tempWords(e.temp)}</td>
+        <td>${ratioWords(e.wind, "too much wind", "too little wind", "days")}</td></tr>`);
+    });
+  }
+  table.querySelector("tbody").innerHTML = rows.join("");
+}
+
+// The walk-forward test, lead day by lead day, the smallest snow miss highlighted
+function drawMlCompare() {
+  const table = document.getElementById("ml-compare");
+  const pct = v => (v == null ? "–" : `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`);
+  const hmf = s => `${s.hits} / ${s.misses} / ${s.false_alarms}`;
+  table.querySelector("thead").innerHTML = `<tr><th rowspan="2">Lead day</th><th rowspan="2">Days</th>
+    <th colspan="3">Snow MAE (inches a day)</th><th colspan="2">Skill</th><th colspan="3">1" days: hits / misses / false alarms</th>
+    <th colspan="2">Temperature MAE (°F)</th><th colspan="2">Wind MAE (mph)</th></tr>
+    <tr><th>Plain avg</th><th>NBM</th><th>Corrected</th><th>NBM</th><th>Corrected</th><th>Plain avg</th><th>NBM</th><th>Corrected</th>
+    <th>Plain avg</th><th>Corrected</th><th>Plain avg</th><th>Corrected</th></tr>`;
+  table.querySelector("tbody").innerHTML = mlData.leads.map(l => {
+    const m = mlData.metrics[l];
+    const s = m.snow;
+    if (!s["0a"].days) return `<tr><td>${mlDayName(l)}</td><td>0</td><td colspan="12" class="muted">No days to score yet</td></tr>`;
+    const best = Math.min(s["0a"].mae, s["0b"].mae, s["1"].mae);
+    const cell = k => `<td${s[k].mae === best ? ' class="ml-best"' : ""}>${r2(s[k].mae)}</td>`;
+    const num = v => (v == null ? "–" : r2(v));
+    return `<tr><td>${mlDayName(l)}</td><td>${s["0a"].days}</td>${cell("0a")}${cell("0b")}${cell("1")}
+      <td>${pct(s["0b"].skill)}</td><td>${pct(s["1"].skill)}</td>
+      <td>${hmf(s["0a"])}</td><td>${hmf(s["0b"])}</td><td>${hmf(s["1"])}</td>
+      <td>${num(m.temp["0a"].mae)}</td><td>${num(m.temp["1"].mae)}</td><td>${num(m.wind["0a"].mae)}</td><td>${num(m.wind["1"].mae)}</td></tr>`;
   }).join("");
-  document.getElementById("beta-compare-note").textContent =
-    "Under each total: the difference from the Forecast tab. Beta and the Forecast tab use the models' own rain/snow split; " +
-    "the two elevation-fix versions decide rain or snow at Collins's height and add precipitation for the height. " +
-    "All four turn snow water into snow with the same hourly snow ratios.";
+  const seasons = mlData.metrics[1]?.seasons ?? {};
+  document.getElementById("ml-compare-note").textContent = "Season totals, Day 1 forecasts on the scored days: " +
+    Object.entries(seasons).map(([w, s]) => `${w}: measured ${r0(s.observed)}", plain average ${r0(s["0a"])}", NBM ${r0(s["0b"])}", corrected ${r0(s["1"])}" (${s.days} days)`).join(" · ") +
+    `. Highlighted: the smallest snow miss for that lead day. Temperature and wind are scored only where Collins measured them (wind from ${mlData.data_used.station.wind_first ?? "–"}).`;
 }
 
-// The timeline of runs: each run in use at about the time it became available (filled, larger for
-// more weight a day ahead), and the next runs expected in the coming day (hollow), with a line at now.
-function drawBetaRuns(hours) {
-  const H = 3600000, now = Date.now();
-  const when = ms => new Date(ms).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-  const runLabel = (m, init) => `${m.name} ${new Date(init).toISOString().slice(11, 13)}Z (starts ${when(init)})`;
-  // A run's weight within its model at a few lead times, from the blend itself
-  const LEADS = [[12, "12 h"], [60, "2.5 days"], [156, "6.5 days"], [324, "13.5 days"]];
-  const weightAt = (run, lead) => {
-    const p = hours[lead]?.parts.find(x => x.weights.some(w => w.run === run));
-    return p ? p.weights.find(w => w.run === run).w : null;
-  };
-  const used = betaData.runs.map(run => ({ run, at: run.init + run.model.delay * H, w24: weightAt(run, 24) ?? weightAt(run, 60) ?? 0 }));
-  const expected = [];
-  BETA_MODELS.forEach(m => {
-    const last = Math.max(...betaData.runs.filter(r => r.model === m).map(r => r.init), now - m.back * H);
-    for (let init = last + m.every * H; init + m.delay * H <= now + 24 * H; init += m.every * H) {
-      if (init + m.delay * H >= now - H) expected.push({ m, init, at: init + m.delay * H });
-    }
-  });
-  const yOf = m => BETA_MODELS.indexOf(m);
-  const nowLine = {
-    id: "nowLine",
-    afterDatasetsDraw(chart) {
-      const { ctx: g, chartArea: a, scales: { x } } = chart;
-      const px = x.getPixelForValue(now);
-      g.save(); g.strokeStyle = "rgba(230,237,245,0.6)"; g.setLineDash([4, 4]);
-      g.beginPath(); g.moveTo(px, a.top); g.lineTo(px, a.bottom); g.stroke();
-      g.fillStyle = "#e6edf5"; g.font = "600 10px " + Chart.defaults.font.family; g.textAlign = "center";
-      g.fillText("NOW", px, a.top - 4); g.restore();
-    },
-  };
-  makeChart("chart-beta-runs", {
-    type: "scatter",
-    plugins: [nowLine],
-    data: { datasets: [
-      { label: "Runs in use", data: used.map(u => ({ x: u.at, y: yOf(u.run.model), u })),
-        backgroundColor: used.map(u => u.run.model.color), borderColor: used.map(u => u.run.model.color),
-        pointRadius: used.map(u => 4 + 8 * u.w24) },
-      { label: "Next runs expected", data: expected.map(e => ({ x: e.at, y: yOf(e.m), e })),
-        backgroundColor: "transparent", borderColor: expected.map(e => e.m.color), borderWidth: 2, pointRadius: 6 },
-    ] },
-    options: {
-      responsive: true, maintainAspectRatio: false, layout: { padding: { top: 14 } },
-      plugins: {
-        legend: { labels: { boxWidth: 12 } },
-        tooltip: { callbacks: { label: ctx => {
-          const d = ctx.raw;
-          if (d.u) return `${runLabel(d.u.run.model, d.u.run.init)} · available about ${when(d.x)} · ${Math.round(d.u.w24 * 100)}% of ${d.u.run.model.name}'s weight a day ahead`;
-          return `${runLabel(d.e.m, d.e.init)} · expected about ${when(d.x)}`;
-        } } },
-      },
-      scales: {
-        x: { type: "linear", min: now - 32 * H, max: now + 24 * H, grid: { color: "rgba(139,155,176,0.15)" },
-          ticks: { stepSize: 6 * H, maxRotation: 0, font: { size: 10 },
-            callback: v => new Date(v).toLocaleString([], { weekday: "short", hour: "numeric" }) } },
-        y: { min: -0.6, max: BETA_MODELS.length - 0.4, reverse: true, grid: { display: false },
-          ticks: { stepSize: 1, callback: v => BETA_MODELS[v]?.name ?? "" } },
-      },
-    },
-  });
-
-  // The same runs as a table, with each one's share of its model at several lead times
-  const table = document.getElementById("beta-runs");
-  table.querySelector("thead").innerHTML = `<tr><th>Run</th><th>Available about</th><th>Age</th>${LEADS.map(([, l]) => `<th>Weight ${l} ahead</th>`).join("")}</tr>`;
-  table.querySelector("tbody").innerHTML = [...used].sort((a, b) => yOf(a.run.model) - yOf(b.run.model) || b.run.init - a.run.init)
-    .map(u => `<tr><td>${runLabel(u.run.model, u.run.init)}</td><td>${when(u.at)}</td><td>${r0((now - u.run.init) / H)} h</td>
-      ${LEADS.map(([lead]) => { const w = weightAt(u.run, lead); return `<td>${w == null ? "–" : `${Math.round(w * 100)}%`}</td>`; }).join("")}</tr>`)
-    .join("") + expected.sort((a, b) => a.at - b.at).map(e => `<tr class="muted"><td>${runLabel(e.m, e.init)}</td><td>${when(e.at)} (expected)</td><td>–</td>${LEADS.map(() => "<td>–</td>").join("")}</tr>`).join("");
+// "Data used" and "How it works", from the settings the job ran with
+function drawMlNotes() {
+  const u = mlData.data_used, st = mlData.settings;
+  const models = Object.entries(mlData.models).map(([key, m]) => {
+    const leads = u.models[key] ?? {};
+    const d1 = leads[1] ?? leads[0];
+    if (!d1) return `<li><b>${m.name}</b>: no overlap with the station yet.</li>`;
+    const days = Object.entries(leads).map(([l, v]) => `Day ${l} ${v.winter_days}`).join(", ");
+    return `<li><b>${m.name}</b> (<code>${m.api}</code>): forecasts from ${d1.first} to ${d1.last}. Winter days with both a forecast and a measurement: ${days}.` +
+      (key === "nam" ? " Open-Meteo's archive keeps the NAM for Day 0 and Day 1 only, and is missing about 6 days of every 2 weeks." : "") + "</li>";
+  }).join("");
+  document.getElementById("ml-data-used").innerHTML = `<ul>
+    <li><b>Measured:</b> the Alta – Collins station (CLN, 9,662 ft), hourly, ${u.station.first} to ${u.station.last}: the liquid gauge, the new-snow board, temperature, and wind (from ${u.station.wind_first ?? "–"}).
+      Two years of it are a CSV download from the Synoptic Data Viewer; newer hours come from the site's hourly station job.</li>
+    ${models}
+    <li><b>Only real overlap is used:</b> a model counts on the days it has a forecast and Collins has a measurement. Nothing missing is filled in.</li>
+  </ul>`;
+  document.getElementById("ml-how").innerHTML = `
+    <li><b>Snow water capped at precipitation:</b> the NBM's snowfall from Open-Meteo is not at the 7 to 1 the site assumes. Over the last two winters its snowfall ÷ 7 came to about twice its own precipitation. So on this tab, for every step, a model's snow water is never more than its precipitation. That alone made the plain average's miss about a third smaller in the test. The Forecast tab does not do this yet, so its NBM, and with it its average, can run higher than Step 0 here.</li>
+    <li><b>Days</b> run midnight to midnight Mountain time, the same as the Snow Summary bars. "Day 1" is a forecast made the day before; "Day 0" is the same day.</li>
+    <li><b>Precipitation:</b> for each model and lead day, the water Collins's gauge caught on the last ${st.PRECIP_WET_DAYS} wet days (at least ${st.WET_DAY_IN}" measured or forecast, within ${st.PRECIP_LOOKBACK_DAYS} days), divided by what the model forecast for them. The model's snow water is multiplied by that, held between ×${st.RATIO_CLIP[0]} and ×${st.RATIO_CLIP[1]}, then turned into snow with the Forecast tab's Kuchera ratio. Fewer than ${st.MIN_WET_DAYS} wet days: left uncorrected.</li>
+    <li><b>Temperature:</b> the model's average error over the last ${st.TEMP_WINDOW_DAYS} days is added. <b>Wind:</b> scaled by measured ÷ forecast over the last ${st.WIND_WINDOW_DAYS} days. Each needs at least ${st.MIN_DAYS} days.</li>
+    <li><b>Measured snow</b> is the new snow on the Collins board, counted as on the Forecast tab, with sensor spikes (a jump of 6" or more that falls back within 3 hours) skipped.</li>
+    <li><b>Fair test:</b> every past winter day (November–April) is forecast using only what was known when the forecast was made, and every step is scored on the same days. Past runs keep no upper-air temperatures, so in the test snow comes from the 2 m temperature's Kuchera ratio, the same for every step.</li>
+    <li><b>Where a model has no correction</b> in Days 0–7, its own forecast is used, and the day is marked under the Step 1 chart.</li>
+    <li><b>Days 8–11</b> of the Step 1 chart are the average of the models, uncorrected (the NBM ends about Day 10, leaving the GFS). <b>Days 12–16</b> are the GFS ensemble's outlook: the average of its 31 runs. There is no history of past ensemble forecasts to correct it with, so the job now saves it (and the ECMWF ensemble) every day; after a winter they can be scored and corrected like Days 0–7.</li>`;
 }
 
 // ---------- Forecast Summaries (in the Locations menu) ----------
@@ -1831,19 +1598,14 @@ async function renderMountainForecasts() {
   });
 }
 
-// The storm a snow box reports, from day-by-day model snow (Map of "YYYY-MM-DD" -> inches):
-// the run of back-to-back days with at least 0.05" that includes `today`, or else the last
+// The storm a snow box reports, from day-by-day model snow (Map of "YYYY-MM-DD" -> inches): the
+// storm (as the Snow Summary finds them, see stormRuns) that includes `today`, or else the last
 // one before it. Null if there is none.
 function latestStorm(daily, today) {
   const days = [...daily.keys()].sort();
-  let storm = null, from = null;
-  for (let i = 0; i <= days.length; i++) {
-    const wet = i < days.length && daily.get(days[i]) >= 0.05;
-    if (wet && from == null) from = days[i];
-    if (!wet && from != null) {
-      if (from <= today) storm = { from, to: days[i - 1] };
-      from = null;
-    }
+  let storm = null;
+  for (const [from, to] of stormRuns(days.map(d => daily.get(d)), 0.05, SNOW_LULL_IN)) {
+    if (days[from] <= today) storm = { from: days[from], to: days[to] };
   }
   return storm;
 }
@@ -2090,7 +1852,6 @@ async function loadHistory(loc) {
   renderSummary();
   renderWater();
   if (allRows.length) renderCharts(allRows.slice(0, activeHours ?? allRows.length)); // the drifting roses use the history
-  if (betaData) drawBeta(); // its already-fallen bars come from the same record
 }
 function historyUrl(loc) {
   const day = offset => { const d = new Date(Date.now() + offset * 86400000); return d.toISOString().slice(0, 10); };
@@ -2119,7 +1880,32 @@ function historyUrl(loc) {
 //   greenWhenRainy         the total is drawn green when more than half of it is rain (water chart)
 //   showRain               the storm's rain is written in green after its snow water (snow chart)
 //   fmt       number => text without the inch mark; min: the least a day needs to count or be labelled
+//   splitBelow optional: a lighter day than this between two snowier stretches splits a storm (stormRuns)
 //   yTitle, tooltipLabel, plugins (extra chart plugins), grace (headroom above the bars, default "15%")
+// Storms in a list of day totals, as [from, to] positions. A storm is a run of back-to-back days
+// with at least `min` each; one drier day ends it. With `splitBelow`, a day under that amount with
+// a day of at least that much on both sides, inside the same run, is a lull between two storms: it
+// ends the one before and is counted in neither (its own bar still shows what it has).
+const SNOW_LULL_IN = 0.4; // the snow charts' `splitBelow`
+function stormRuns(values, min, splitBelow = null) {
+  const runs = [];
+  for (let i = 0; i < values.length;) {
+    if (!(values[i] >= min)) { i++; continue; }
+    let j = i;
+    while (j + 1 < values.length && values[j + 1] >= min) j++;
+    let start = null;
+    for (let k = i; k <= j; k++) {
+      const lull = splitBelow != null && values[k] < splitBelow &&
+        values.slice(i, k).some(v => v >= splitBelow) && values.slice(k + 1, j + 1).some(v => v >= splitBelow);
+      if (!lull && start == null) start = k;
+      if (lull && start != null) { runs.push([start, k - 1]); start = null; }
+    }
+    if (start != null) runs.push([start, j]);
+    i = j + 1;
+  }
+  return runs;
+}
+
 function dailyChart(o) {
   const sum = vals => vals.reduce((a, v) => a + (v || 0), 0);
   const all = [...o.days.keys()].sort();
@@ -2145,45 +1931,37 @@ function dailyChart(o) {
   document.getElementById(`${o.id}-inner`).style.width =
     keys.length <= visible ? "100%" : `${(room / visible) * keys.length + SUMMARY_AXIS_PX}px`;
 
-  // Storm totals, each drawn directly above the bars it adds up. A storm is a run of
-  // back-to-back days with at least `min` each; one drier day ends it.
+  // Storm totals, each drawn directly above the bars it adds up (see stormRuns)
   const totalOf = k => o.fallen(o.days.get(k)) + o.toCome(o.days.get(k));
   const md = k => `${dateOf(k).getMonth() + 1}/${dateOf(k).getDate()}`;
   const ti = keys.indexOf(o.today);
   const sections = [];
-  let from = null;
-  for (let i = 0; i <= keys.length; i++) {
-    const wet = i < keys.length && totalOf(keys[i]) >= o.min;
-    if (wet && from == null) from = i;
-    if (!wet && from != null) {
-      const to = i - 1;
-      const range = from === to ? md(keys[from]) : `${md(keys[from])}–${md(keys[to])}`;
-      const stormDays = keys.slice(from, to + 1).map(k => o.days.get(k));
-      const fallen = sum(stormDays.map(o.fallen)), toCome = sum(stormDays.map(o.toCome));
-      // Snow water for the same days, when the caller can supply it (the snow summary does)
-      const fallenSwe = o.fallenSwe ? sum(stormDays.map(o.fallenSwe)) : null;
-      const toComeSwe = o.toComeSwe ? sum(stormDays.map(o.toComeSwe)) : null;
-      // The rain within the same totals, when the caller can supply it (the water chart does)
-      const fallenRain = o.fallenRain ? sum(stormDays.map(o.fallenRain)) : 0;
-      const toComeRain = o.toComeRain ? sum(stormDays.map(o.toComeRain)) : 0;
-      const stormRain = underWay => (underWay ? toComeRain : fallenRain + toComeRain); // matches the number shown
-      // A storm that has started but not finished: the big number is only what is still to
-      // come, and the line under it gives what has already fallen
-      const underWay = fallen >= o.min && toCome >= o.min;
-      sections.push({
-        from, to,
-        labels: [`Storm ${range}`, range], // the longest that fits is used
-        value: underWay ? toCome : fallen + toCome,
-        swe: toComeSwe == null ? null : underWay ? toComeSwe : fallenSwe + toComeSwe, // matches `value`
-        // Water chart: more than half of the number shown is rain
-        rainy: !!o.greenWhenRainy && stormRain(underWay) > (underWay ? toCome : fallen + toCome) / 2,
-        // Snow chart: the storm's rain, written after its snow water
-        rain: o.showRain ? stormRain(underWay) : null,
-        past: to < ti, // entirely before today: a model estimate of what fell
-        split: underWay ? `${o.fmt(fallen)}" already fallen` : null,
-      });
-      from = null;
-    }
+  for (const [from, to] of stormRuns(keys.map(totalOf), o.min, o.splitBelow)) {
+    const range = from === to ? md(keys[from]) : `${md(keys[from])}–${md(keys[to])}`;
+    const stormDays = keys.slice(from, to + 1).map(k => o.days.get(k));
+    const fallen = sum(stormDays.map(o.fallen)), toCome = sum(stormDays.map(o.toCome));
+    // Snow water for the same days, when the caller can supply it (the snow summary does)
+    const fallenSwe = o.fallenSwe ? sum(stormDays.map(o.fallenSwe)) : null;
+    const toComeSwe = o.toComeSwe ? sum(stormDays.map(o.toComeSwe)) : null;
+    // The rain within the same totals, when the caller can supply it (the water chart does)
+    const fallenRain = o.fallenRain ? sum(stormDays.map(o.fallenRain)) : 0;
+    const toComeRain = o.toComeRain ? sum(stormDays.map(o.toComeRain)) : 0;
+    const stormRain = underWay => (underWay ? toComeRain : fallenRain + toComeRain); // matches the number shown
+    // A storm that has started but not finished: the big number is only what is still to
+    // come, and the line under it gives what has already fallen
+    const underWay = fallen >= o.min && toCome >= o.min;
+    sections.push({
+      from, to,
+      labels: [`Storm ${range}`, range], // the longest that fits is used
+      value: underWay ? toCome : fallen + toCome,
+      swe: toComeSwe == null ? null : underWay ? toComeSwe : fallenSwe + toComeSwe, // matches `value`
+      // Water chart: more than half of the number shown is rain
+      rainy: !!o.greenWhenRainy && stormRain(underWay) > (underWay ? toCome : fallen + toCome) / 2,
+      // Snow chart: the storm's rain, written after its snow water
+      rain: o.showRain ? stormRain(underWay) : null,
+      past: to < ti, // entirely before today: a model estimate of what fell
+      split: underWay ? `${o.fmt(fallen)}" already fallen` : null,
+    });
   }
 
   // The measured storm total beside the Now box uses the Snow Summary's storm days
@@ -2251,7 +2029,7 @@ function renderSummary() {
 }
 // The same chart for any resort: `rows` is its GFS forecast from the current hour, `history` the
 // model's record, `series` its models (modelSeries); `id` names the chart's elements, as in dailyChart.
-// `avg` ({ snow, swe }, one value per row) replaces the usual average of the models; the Beta tab uses it.
+// `avg` ({ snow, swe }, one value per row), when given, replaces the usual average of the models.
 function summaryChart({ id, rows, history, series, avg: given }) {
   if (!rows.length) return;
   const past = history.filter(r => r.time < rows[0].time); // everything before the current hour
@@ -2293,6 +2071,7 @@ function summaryChart({ id, rows, history, series, avg: given }) {
     showRain: true,
     fmt: r1,
     min: 0.05, // any day that shows 0.1" or more
+    splitBelow: SNOW_LULL_IN, // a light day between two snowier stretches splits them into two storms
     yTitle: "inches of snow/rain",
     grace: "30%", // room for a rain label above the snow label
     datasets: keys => [
@@ -4121,7 +3900,7 @@ const TAB_REFRESH = {
   },
   models: () => loadModels(locations),
   stations: () => loadStations(),
-  beta: () => loadBeta(),
+  "machine-learning": () => { mlData = null; mlPrecip = null; mlEnsemble = null; return showMachineLearning(); },
 };
 document.getElementById("refresh").addEventListener("click", () => {
   const note = document.getElementById("refresh-note");
@@ -4130,7 +3909,7 @@ document.getElementById("refresh").addEventListener("click", () => {
     clearTimeout(note.timer);
     note.timer = setTimeout(() => { note.textContent = ""; }, 5000);
   };
-  const view = ["forecast", "beta", "metrics", "models", "stations", "cams", "guide", "info"]
+  const view = ["forecast", "machine-learning", "metrics", "models", "stations", "cams", "guide", "info"]
     .find(v => !document.getElementById(`view-${v}`).hidden);
   if (view === "cams") { drawMountainCams(); say("Pictures reloaded."); return; }
   if (!TAB_REFRESH[view]) { say("Nothing on this tab to refresh."); return; }
@@ -4195,7 +3974,7 @@ document.addEventListener("click", e => menus.forEach(m => { if (!m.contains(e.t
 document.addEventListener("keydown", e => { if (e.key === "Escape") menus.forEach(m => { m.open = false; }); });
 document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener("click", () => {
   const view = btn.dataset.view;
-  for (const v of ["forecast", "beta", "metrics", "models", "stations", "cams", "guide", "info", "storms", "mountains", "cameras", "allstations", "map"]) document.getElementById(`view-${v}`).hidden = v !== view;
+  for (const v of ["forecast", "machine-learning", "metrics", "models", "stations", "cams", "guide", "info", "storms", "mountains", "cameras", "allstations", "map"]) document.getElementById(`view-${v}`).hidden = v !== view;
   document.querySelectorAll(".tab[data-view]").forEach(b => {
     b.classList.toggle("active", b === btn);
     b.setAttribute("aria-pressed", b === btn);
@@ -4214,7 +3993,7 @@ document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener
   if (view === "mountains") renderMountainForecasts().catch(err => console.warn("Mountain forecasts unavailable", err));
   if (view === "allstations") renderAllStations().catch(err => console.warn("Weather stations unavailable", err));
   if (view === "stations") homeStationDetail(); // back from the Weather Stations page, if it was open there
-  if (view === "beta") showBeta();
+  if (view === "machine-learning") showMachineLearning();
   showCameras(view === "cameras");
   showMountainCams(view === "cams");
   showMap(view === "map");
@@ -4234,8 +4013,8 @@ document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener
 // The Cams tab is only there for a resort with cams listed in AREAS, and Weather Stations for one with stations
 if (!AREA.cams) document.querySelector('.tab[data-view="cams"]').remove();
 if (!AREA.stations.length) document.querySelector('.tabs[data-area-pages] .tab[data-view="stations"]').remove();
-// The Beta tab is on Alta's page only, for now
-if (POINT || AREA_KEY !== "alta") document.querySelector('.tab[data-view="beta"]').remove();
+// The Machine Learning tab is on Alta's page only, for now
+if (POINT || AREA_KEY !== "alta") document.querySelector('.tab[data-view="machine-learning"]').remove();
 
 // ---------- Back button ----------
 // The ← at the left of the header, on every page. Each step in the browser's history records in

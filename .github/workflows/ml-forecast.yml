@@ -1,0 +1,48 @@
+# Every morning: adds yesterday's Mid Collins measurements and the models' latest forecasts to the
+# archive, tests every step of the Machine Learning forecast again, and works out today's
+# corrections (ml_forecast/run.py). The Machine Learning tab reads data/ml-forecast.json.
+# Needs no secrets: it uses Open-Meteo's free Previous Runs API and data/alta-collins.json.
+name: Machine Learning forecast
+
+on:
+  schedule:
+    - cron: "40 13 * * *" # 13:40 UTC daily (6:40 or 7:40 AM Mountain), after the overnight runs are out
+  workflow_dispatch: # lets it be run by hand from the Actions tab
+
+permissions:
+  contents: write # to commit the archive and the results
+
+concurrency:
+  group: station-data # the same group as the station job, so the two never push at once
+  cancel-in-progress: false
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ml_forecast/requirements.txt
+
+      - run: pip install -r ml_forecast/requirements.txt
+
+      - name: Update the archive, test and correct
+        run: python -m ml_forecast.run
+
+      - name: Commit the archive and results if they changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ml_forecast/data/archive data/ml-forecast.json
+          if git diff --cached --quiet; then
+            echo "Nothing new."
+          else
+            git commit -m "Update Machine Learning forecast"
+            git pull --rebase
+            git push
+          fi
