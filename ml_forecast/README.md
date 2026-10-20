@@ -65,6 +65,12 @@ How much forecast history exists (precipitation, at Collins):
 - **NBM**: from 2024-10-08, Days 0–7
 - **NAM**: from 2025-09-01, Days 0–1 only, about 6 days missing every 2 weeks
 
+Snow water is each model's own: the GFS's precipitation minus its rain and showers, and the NBM's
+and NAM's `snowfall_water_equivalent` (their precipitation minus their rain), the same as on the
+site. Their snowfall figures aren't used, because each model makes them at its own snow ratio (the
+NBM's is about 12 to 1). Open-Meteo's archive has the NBM's snow water only from October 2025, so
+its snow, and with it every step's snow score, starts then (`SWE_FROM` in `config.py`).
+
 Only days where a model has a forecast **and** Collins has a measurement are used. Nothing is
 filled in. Past runs keep no upper-air temperatures, so in the test snow comes from the 2 m
 temperature's Kuchera ratio (the same for every step). The live tab uses the Forecast tab's full

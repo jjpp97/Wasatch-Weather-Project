@@ -237,6 +237,23 @@ td.ml-best { background: rgba(95, 211, 163, 0.16); color: var(--text); font-weig
 .mtn-card { cursor: pointer; }
 .mtn-card:hover { border-color: var(--muted); }
 .mtn-card:hover h3 a { color: var(--accent); }
+/* Lists of saved spots: their entries in the Locations menu, the list's name and sort buttons,
+   and each card's move / rename / remove buttons */
+#list-menu { display: contents; }
+#lists-open { display: none !important; } /* only clicked from app.js */
+.fav-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 10px; }
+.fav-title { margin: 0 4px 0 0; font-size: 1.2rem; }
+.fav-sort-label { margin-left: auto; }
+.fav-bar .range-bar { margin: 0; }
+.fav-head .fav-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.fav-btn { font: inherit; font-size: 0.78rem; color: var(--muted); cursor: pointer; background: var(--card);
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
+.fav-btn:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
+.fav-btn:disabled { opacity: 0.35; cursor: default; }
+.fav-btn:focus-visible, .fav-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fav-name { font: inherit; font-size: 0.95rem; color: var(--text); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px 8px; width: min(16rem, 100%); }
+.map-spot-save { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 0; }
 @media (max-width: 600px) {
   /* Two periods to a row on a phone, so the big numbers fit */
   .storm-card .tile.snow-box { grid-template-columns: repeat(2, minmax(0, 1fr)); } /* beats .tile.snow-box, which comes later */

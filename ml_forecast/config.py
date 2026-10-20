@@ -20,6 +20,9 @@ MODELS = {
     "nam": {"name": "NAM", "api": "ncep_nam_conus", "leads": range(0, 2)},
 }
 LEADS = range(0, 8)              # lead days corrected; later days stay the plain average
+# Open-Meteo's archive has the NBM's snow water only from October 2025 (before that it is missing,
+# or in Oct–Nov 2024 all labelled rain), so its snow counts only from then
+SWE_FROM = {"nbm": "2025-10-01"}
 BASELINE_ALONE = "nbm"           # Step 0b: this model on its own
 
 PREVIOUS_RUNS_URL = "https://previous-runs-api.open-meteo.com/v1/forecast"

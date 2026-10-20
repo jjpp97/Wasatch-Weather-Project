@@ -4,9 +4,9 @@ For lead day N the API gives, for every hour, the value the model forecast N day
 is its latest run). Hours are fetched and stored in UTC, then summed into Mountain-time days.
 Snow water and snow are worked out the way the site's Forecast tab does it (see app.js
 hourRows and modelSeries): the GFS's precipitation minus its rain and showers; the NBM's and NAM's
-snowfall divided by 7 (Open-Meteo reports their snowfall at 7 to 1), but never more than the
-model's precipitation (see daily). Snow is that water times the Kuchera ratio. Past runs keep no upper-air temperatures, so the ratio here comes from the 2 m
-temperature alone.
+own snow water (Open-Meteo's snowfall_water_equivalent, which is their precipitation minus their
+rain). Snow is that water times the Kuchera ratio. Past runs keep no upper-air temperatures, so
+the ratio here comes from the 2 m temperature alone.
 """
 import datetime as dt
 import json
@@ -20,7 +20,7 @@ import pandas as pd
 
 from . import archive, config
 
-VARS = {"precipitation": "precip", "rain": "rain", "showers": "showers", "snowfall": "snowfall",
+VARS = {"precipitation": "precip", "rain": "rain", "showers": "showers", "snowfall_water_equivalent": "swe_model",
         "temperature_2m": "temp", "wind_speed_10m": "wind"}
 
 
@@ -98,10 +98,10 @@ def daily(hours):
     h = hours.copy()
     h["day"] = pd.to_datetime(h["time"].dt.tz_convert(config.SITE["tz"]).dt.date)
     gfs_way = (h["precip"] - h["rain"].fillna(0) - h["showers"].fillna(0)).clip(lower=0)
-    # The NBM's snowfall is not at 7 to 1: over two winters its snowfall ÷ 7 came to about twice
-    # its own precipitation. Snow water can't be more than the precipitation, so it is capped there
-    # (for every step, so the steps are compared fairly; app.js does the same on the tab).
-    h["swe"] = np.minimum(np.where(h["model"] == "gfs", gfs_way, h["snowfall"] / 7), h["precip"])
+    h["swe"] = np.where(h["model"] == "gfs", gfs_way, h["swe_model"])
+    # Where the archive's snow water for a model can't be trusted yet, it is left out (not filled in)
+    for model, first in config.SWE_FROM.items():
+        h.loc[(h["model"] == model) & (h["day"] < pd.Timestamp(first)), "swe"] = np.nan
     h["snow"] = h["swe"] * kuchera(h["temp"])
     g = h.groupby(["model", "lead", "day"])
     out = pd.DataFrame({
@@ -111,6 +111,8 @@ def daily(hours):
         "temp": g["temp"].mean(),
         "wind": g["wind"].mean(),
         "hours": g["precip"].count(),
+        "swe_hours": g["swe"].count(),
     })
-    out = out[out["hours"] >= config.MIN_HOURS].drop(columns="hours")
+    out.loc[out["swe_hours"] < config.MIN_HOURS, ["swe", "snow"]] = np.nan  # too little snow water that day
+    out = out[out["hours"] >= config.MIN_HOURS].drop(columns=["hours", "swe_hours"])
     return out.reset_index()

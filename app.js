@@ -37,8 +37,8 @@ const MODELS = [
   { id: "ncep_nam_conus", name: "NAM (US)", color: "#6cc3ff", dash: [2, 3] },
   { id: "ecmwf_aifs025_single", name: "ECMWF AI", color: "#b388ff", dash: [8, 3, 2, 3], cloudOnly: true }, // not on the snowfall chart or in its average
   // ECMWF's main model at 9 km. Drawn on the snowfall charts for comparison only: it is in no
-  // average and on no other chart (snowOnly, notInAverage). Its snowfall is reported at 7 to 1,
-  // like NAM's, so it goes through the same conversion as the other models.
+  // average and on no other chart (snowOnly, notInAverage). Its snow water goes through the same
+  // Kuchera ratio as the other models'.
   { id: "ecmwf_ifs", name: "ECMWF IFS (not in average)", color: "#ff6fae", dash: [], snowOnly: true, notInAverage: true },
 ];
 
@@ -298,7 +298,7 @@ function showArea() {
   nav.onclick = e => {
     const a = e.target.closest("a");
     if (!a || a.getAttribute("href") === "?#map") return; // the map spot's own tab goes back to the Map
-    a.href = a.getAttribute("href").split("#")[0] + (["#storms", "#mountains", "#cameras", "#allstations", "#map"].includes(location.hash) ? "" : location.hash);
+    a.href = a.getAttribute("href").split("#")[0] + (["#favorites", "#storms", "#mountains", "#cameras", "#allstations", "#map"].includes(location.hash) ? "" : location.hash);
   };
   document.querySelector(".tabs[data-area-pages]").setAttribute("aria-label", `${AREA.name} pages`);
 
@@ -378,7 +378,7 @@ function noteDownload(url) {
 // Snowfall and cloud cover from every model in MODELS at every location, for the comparison charts
 const modelsUrl = locs => "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({
   ...pointParams(locs),
-  hourly: "snowfall,cloud_cover,precipitation_probability,temperature_2m,wind_speed_10m",
+  hourly: "snowfall_water_equivalent,cloud_cover,precipitation_probability,temperature_2m,wind_speed_10m",
   models: MODELS.map(m => m.id).join(","),
   forecast_days: 16,
   precipitation_unit: "inch",
@@ -1054,7 +1054,8 @@ async function openSpotForecast(latlng) {
     <div id="${id}-scroll" class="summary-scroll" tabindex="0" aria-label="Snow summary for this spot, scrolls sideways">
       <div id="${id}-inner" class="chart-wrap summary"><canvas id="chart-${id}"></canvas></div>
     </div>
-    <p class="muted small map-spot-note">Loading the snow forecast for this spot…</p>`;
+    <p class="muted small map-spot-note">Loading the snow forecast for this spot…</p>
+    <div class="map-spot-save"></div>`;
   const popup = L.popup({ minWidth: width, maxWidth: width, autoPanPadding: [16, 16], className: "map-popup" })
     .setLatLng(latlng).setContent(box);
   popup.chartId = id;
@@ -1085,6 +1086,7 @@ async function openSpotForecast(latlng) {
     box.addEventListener("click", () => {
       if (!scrolled) location.href = `?lat=${lat}&lon=${lon}&ft=${Math.round(ft)}`;
     });
+    spotSaveButton(box.querySelector(".map-spot-save"), lat, lon, ft);
     box.classList.add("ready");
   } catch (err) {
     console.warn("Spot forecast unavailable", err);
@@ -1097,7 +1099,7 @@ async function openSpotForecast(latlng) {
 // ml_forecast/run.py (see ml_forecast/README.md) measures each model's usual mistake at Collins,
 // lead day by lead day, and writes data/ml-forecast.json: today's corrections, and a walk-forward
 // test of every step over past winters. This tab applies those corrections to the live models the
-// Forecast tab already loads, with each model's snow water capped at its precipitation (see drawMlUpcoming).
+// Forecast tab already loads, so Step 0's plain average here is the Forecast tab's.
 //   Step 0a  the plain average of GFS + HRRR, NBM and NAM; Step 0b  the NBM alone
 //   Step 1   each model's precipitation times its correction for that lead day, then averaged
 // Days 8–11 of Step 1 are the uncorrected average; Days 12–16 the GFS ensemble (ML_ENSEMBLES), marked "outlook".
@@ -1109,13 +1111,12 @@ const ML_STEPS = {
 const ML_MODEL_KEYS = { gfs_seamless: "gfs", ncep_nbm_conus: "nbm", ncep_nam_conus: "nam" };
 const ML_GHOST = "rgba(201, 212, 226, 0.22)"; // Step 0a drawn faintly behind the other steps
 let mlData = null;  // data/ml-forecast.json once loaded
-let mlPrecip = null; // each model's hourly precipitation: Map(model id -> Map(time -> inches))
 let mlLead = 1;     // lead day shown in the track records
 
 // Days 12–16 of the corrected Snow Summary: the GFS ensemble's outlook. Days 8–11 stay the average
 // of the models (uncorrected; the NBM ends about Day 10, leaving the GFS). The ensemble's snow water
-// is the mean of its 31 runs, each capped at its own precipitation like the models above; snow uses
-// the same Kuchera ratio. Not bias-corrected: there is no history of past ensemble forecasts to
+// is the mean of its 31 runs' own snow water, as for the models above; snow uses the same Kuchera
+// ratio. Not bias-corrected: there is no history of past ensemble forecasts to
 // measure it against yet (ml_forecast/outlook.py saves them each day so they can be scored later).
 const ML_OUTLOOK_FROM = 12;
 const ML_ENSEMBLES = [
@@ -1126,32 +1127,19 @@ let mlEnsemble = null; // Map(ending -> Map(time -> mean snow water of its runs)
 
 async function loadMlEnsemble() {
   const j = await apiJson(track(["machine-learning"], "https://ensemble-api.open-meteo.com/v1/ensemble?" + new URLSearchParams({
-    ...pointParams([locations[0]]), hourly: "precipitation,snowfall", models: ML_ENSEMBLES.map(e => e.api).join(","),
+    ...pointParams([locations[0]]), hourly: "snowfall_water_equivalent", models: ML_ENSEMBLES.map(e => e.api).join(","),
     forecast_days: 16, precipitation_unit: "inch",
   })), { cache: "no-store" });
   const h = j.hourly;
   mlEnsemble = new Map(ML_ENSEMBLES.map(e => {
-    const runs = Object.keys(h).filter(k => k.startsWith("precipitation_") && k.endsWith(e.ending));
+    const runs = Object.keys(h).filter(k => k.startsWith("snowfall_water_equivalent") && k.endsWith(e.ending));
     const mean = new Map();
     h.time.forEach((t, i) => {
-      const w = runs.map(k => {
-        const p = h[k][i], s = h[k.replace("precipitation_", "snowfall_")]?.[i];
-        return p == null || s == null ? null : Math.min(s / 7, p);
-      }).filter(v => v != null);
+      const w = runs.map(k => h[k][i]).filter(v => v != null);
       if (w.length) mean.set(t, w.reduce((a, b) => a + b, 0) / w.length);
     });
     return [e.ending, mean];
   }));
-}
-
-// Each model's own precipitation, which caps its snow water (see drawMlUpcoming). Fetched here,
-// not added to the Forecast tab's download, so that tab is unchanged.
-async function loadMlPrecip() {
-  const ids = Object.keys(ML_MODEL_KEYS);
-  const j = await apiJson(track(["machine-learning"], "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({
-    ...pointParams([locations[0]]), hourly: "precipitation", models: ids.join(","), forecast_days: 16, precipitation_unit: "inch",
-  })), { cache: "no-store" });
-  mlPrecip = new Map(ids.map(id => [id, new Map(j.hourly.time.map((t, i) => [t, j.hourly[`precipitation_${id}`]?.[i]]))]));
 }
 
 const mlShowing = () => !document.getElementById("view-machine-learning").hidden;
@@ -1170,23 +1158,19 @@ async function showMachineLearning() {
   drawMachineLearning();
 }
 
-let mlPrecipLoading = null, mlEnsembleLoading = null;
+let mlEnsembleLoading = null;
 function drawMachineLearning() {
   if (!mlData) return;
   // The page's forecast point is known once main() has read locations.json; this draws again when it arrives
-  if (!mlPrecip && !mlPrecipLoading && locations.length) {
-    mlPrecipLoading = loadMlPrecip().then(drawMachineLearning)
-      .catch(err => console.warn("Model precipitation unavailable", err)).finally(() => { mlPrecipLoading = null; });
-  }
   if (!mlEnsemble && !mlEnsembleLoading && locations.length) {
     mlEnsembleLoading = loadMlEnsemble().then(drawMachineLearning)
       .catch(err => console.warn("Ensembles unavailable", err)).finally(() => { mlEnsembleLoading = null; });
   }
   const status = document.getElementById("ml-status");
   const updated = new Date(mlData.updated).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  status.textContent = `Last updated ${updated}.` + (modelData && mlPrecip ? "" : " Waiting for the models to load…");
+  status.textContent = `Last updated ${updated}.` + (modelData ? "" : " Waiting for the models to load…");
   drawMlLeads();
-  if (allRows.length && modelData && mlPrecip) drawMlUpcoming();
+  if (allRows.length && modelData) drawMlUpcoming();
   drawMlTracks();
   drawMlCorrections();
   drawMlCompare();
@@ -1204,15 +1188,7 @@ function drawMlUpcoming() {
   const rows = allRows;
   const today = rows[0].time.slice(0, 10);
   const leadOf = t => Math.round((new Date(t.slice(0, 10) + "T12:00") - new Date(today + "T12:00")) / 86400000);
-  // The NBM's snowfall is not at 7 to 1 (its snowfall ÷ 7 has run about twice its precipitation),
-  // so on this tab every model's snow water is capped at its own precipitation, snow scaled to match.
-  // ml_forecast/forecasts.py does the same in the test, so every step here is on the same footing.
-  const series = modelSeries(rows).map(s => {
-    const p = mlPrecip.get(s.id);
-    if (!p || !ML_MODEL_KEYS[s.id]) return s;
-    const keep = rows.map((r, i) => { const w = s.swe[i], cap = p.get(r.time); return w > 0 && cap != null && w > cap ? cap / w : 1; });
-    return { ...s, swe: s.swe.map((v, i) => (v == null ? v : v * keep[i])), snow: s.snow.map((v, i) => (v == null ? v : v * keep[i])) };
-  });
+  const series = modelSeries(rows);
   const corrected = series.map(s => {
     const key = ML_MODEL_KEYS[s.id];
     if (!key) return s;
@@ -1526,7 +1502,7 @@ function drawMlNotes() {
     <li><b>Only real overlap is used:</b> a model counts on the days it has a forecast and Collins has a measurement. Nothing missing is filled in.</li>
   </ul>`;
   document.getElementById("ml-how").innerHTML = `
-    <li><b>Snow water capped at precipitation:</b> the NBM's snowfall from Open-Meteo is not at the 7 to 1 the site assumes. Over the last two winters its snowfall ÷ 7 came to about twice its own precipitation. So on this tab, for every step, a model's snow water is never more than its precipitation. That alone made the plain average's miss about a third smaller in the test. The Forecast tab does not do this yet, so its NBM, and with it its average, can run higher than Step 0 here.</li>
+    <li><b>Snow water:</b> every model's own snow water (its precipitation minus its rain, as Open-Meteo gives it), turned into snow with the Kuchera ratio. The site used to take the NBM's and NAM's snowfall ÷ 7, but the NBM makes its snowfall at about 12 to 1, so that roughly doubled its snow. Open-Meteo's archive only has the NBM's snow water from October 2025, so the test scores snow from then on.</li>
     <li><b>Days</b> run midnight to midnight Mountain time, the same as the Snow Summary bars. "Day 1" is a forecast made the day before; "Day 0" is the same day.</li>
     <li><b>Precipitation:</b> for each model and lead day, the water Collins's gauge caught on the last ${st.PRECIP_WET_DAYS} wet days (at least ${st.WET_DAY_IN}" measured or forecast, within ${st.PRECIP_LOOKBACK_DAYS} days), divided by what the model forecast for them. The model's snow water is multiplied by that, held between ×${st.RATIO_CLIP[0]} and ×${st.RATIO_CLIP[1]}, then turned into snow with the Forecast tab's Kuchera ratio. Fewer than ${st.MIN_WET_DAYS} wet days: left uncorrected.</li>
     <li><b>Temperature:</b> the model's average error over the last ${st.TEMP_WINDOW_DAYS} days is added. <b>Wind:</b> scaled by measured ÷ forecast over the last ${st.WIND_WINDOW_DAYS} days. Each needs at least ${st.MIN_DAYS} days.</li>
@@ -1596,6 +1572,291 @@ async function renderMountainForecasts() {
     dailyLeft.delete(`mtn-${r.key}`);
     summaryChart({ id: `mtn-${r.key}`, rows: r.rows, history: r.hist, series: r.series });
   });
+}
+
+// ---------- Lists of saved spots (in the Locations menu) ----------
+// Spots saved from the Map, grouped into named lists, kept in this browser only (localStorage):
+// [{ id, name, sort, spots: [{ id, name, lat, lon, ft }] }]. The first list starts as "Favorites"
+// (earlier favorites are moved into it). Each list has a page in the Locations menu showing every
+// spot's Snow Summary, in the list's own order ("Default") or most forecast snow first
+// ("Snowfall"). The arrows change the order at any time; using them switches back to Default.
+const LISTS_KEY = "wasatch-lists-v1", LIST_OPEN_KEY = "wasatch-list-open-v1";
+const OLD_FAV_KEY = "wasatch-favorites-v1"; // favorites from before there were lists
+function loadLists() {
+  try {
+    const lists = JSON.parse(localStorage.getItem(LISTS_KEY));
+    if (Array.isArray(lists) && lists.length) return lists;
+    const old = JSON.parse(localStorage.getItem(OLD_FAV_KEY)) || [];
+    return [{ id: "favorites", name: "Favorites", sort: "default", spots: old }];
+  } catch {
+    return [{ id: "favorites", name: "Favorites", sort: "default", spots: [] }];
+  }
+}
+const saveLists = lists => { try { localStorage.setItem(LISTS_KEY, JSON.stringify(lists)); } catch { /* not saved */ } };
+const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const escHtml = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let openListId = (() => { try { return localStorage.getItem(LIST_OPEN_KEY); } catch { return null; } })();
+const favData = new Map(); // spot id -> { rows, series, hist, ahead } or { failed: true }, so redraws don't download again
+let favUrls = []; // the downloads behind the open list, for the refresh button
+
+// The list whose page is open: the one picked last, or the first
+function openList(lists = loadLists()) {
+  return lists.find(l => l.id === openListId) ?? lists[0];
+}
+
+// The lists in the Locations menu, above Storm Results, then "+ New list". Picking one opens the
+// shared list page through its hidden menu button (data-view="favorites"), so it switches like any page.
+function renderListMenu() {
+  const holder = document.getElementById("list-menu");
+  if (!holder) return;
+  const lists = loadLists(), showing = !document.getElementById("view-favorites").hidden, open = openList(lists);
+  holder.innerHTML = lists.map(l => `<button type="button" class="tab${showing && l.id === open.id ? " active" : ""}" data-list="${l.id}">${escHtml(l.name)}</button>`).join("") +
+    '<button type="button" class="tab muted" data-new-list>+ New list</button>';
+  holder.onclick = e => {
+    const btn = e.target.closest("[data-list], [data-new-list]");
+    if (!btn) return;
+    if (btn.dataset.list) showList(btn.dataset.list);
+    else {
+      const all = loadLists(), list = { id: newId(), name: `List ${all.length + 1}`, sort: "default", spots: [] };
+      all.push(list);
+      saveLists(all);
+      showList(list.id, true);
+    }
+  };
+}
+function showList(id, renaming = false) {
+  openListId = id;
+  try { localStorage.setItem(LIST_OPEN_KEY, id); } catch { /* not saved */ }
+  listRenaming = renaming;
+  document.getElementById("lists-open").click(); // switches to the list page, which calls renderFavorites
+}
+let listRenaming = false; // a new list opens with its name ready to type
+
+// One spot's forecast: the same three downloads as a map spot's window
+async function loadFavForecast(f) {
+  const loc = pointLoc(f.lat, f.lon, f.ft);
+  try {
+    const [[fc], md, hist] = await Promise.all([
+      getForecast([loc], true),
+      apiJson(modelsUrl([loc]), { cache: "no-store" }).then(d => [].concat(d)).catch(() => null), // GFS alone if it fails
+      apiJson(historyUrl(loc), { cache: "no-store" }).then(h => hourRows(h.hourly)).catch(() => []),
+    ]);
+    favUrls.push(...[modelsUrl([loc]), historyUrl(loc)].map(u => new URL(u).href));
+    const rows = processForecast(fc), series = modelSeries(rows, 0, md);
+    favData.set(f.id, { rows, series, hist, ahead: averageSnow(rows, series).snow.reduce((a, v) => a + (v || 0), 0),
+      weekend: weekendOutlook(rows, series) });
+  } catch (err) {
+    console.warn(`Forecast unavailable for ${f.name}`, err);
+    favData.set(f.id, { failed: true });
+  }
+}
+
+// The coming weekend at one spot, for sorting a list: the next Saturday and Sunday (only the rest
+// of today when it is Sunday). Sun is 100% less the models' average cloud cover in the daylight
+// hours, as in the daily forecast; precipitation is the models' average snow water plus the GFS
+// rain, as on the water chart. Null if the forecast doesn't reach the weekend.
+function weekendOutlook(rows, series) {
+  const today = new Date(rows[0].time.slice(0, 10) + "T12:00");
+  const dow = today.getDay(); // 0 Sunday … 6 Saturday
+  const key = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const sat = new Date(today); sat.setDate(today.getDate() + (dow === 0 ? 0 : 6 - dow));
+  const days = dow === 0 ? [key(today)] : [key(sat), key(new Date(sat.getTime() + 86400000))];
+  const avg = averageSnow(rows, series);
+  const drawn = series.filter(s => !s.snowOnly);
+  const cloud = drawn.length > 1 ? averageAcross(drawn, "cloud") : rows.map(r => r.cloud);
+  let precip = 0, hours = 0, cloudSum = 0, light = 0;
+  rows.forEach((r, i) => {
+    if (!days.includes(r.time.slice(0, 10))) return;
+    hours++;
+    precip += (avg.swe[i] || 0) + (r.rain || 0);
+    const c = cloud[i] ?? r.cloud;
+    if (r.isDay !== 0 && c != null) { cloudSum += c; light++; }
+  });
+  if (!hours) return null;
+  const md = k => { const d = new Date(k + "T12:00"); return `${d.toLocaleDateString([], { weekday: "short" })} ${d.getMonth() + 1}/${d.getDate()}`; };
+  return { sun: light ? 100 - cloudSum / light : null, precip, label: days.map(md).join("–") };
+}
+
+async function renderFavorites(refresh = false) {
+  const holder = document.getElementById("favorites");
+  if (!holder) return;
+  renderListMenu();
+  const list = openList();
+  document.getElementById("global-title").textContent = list.name;
+  if (refresh) { favData.clear(); favUrls = []; }
+  const missing = list.spots.filter(f => !favData.has(f.id));
+  if (missing.length) {
+    holder.innerHTML = `<p class="muted">Loading ${escHtml(list.name)}…</p>`;
+    await Promise.all(missing.map(loadFavForecast));
+  }
+  drawFavorites();
+}
+
+function drawFavorites() {
+  const holder = document.getElementById("favorites");
+  const lists = loadLists(), list = openList(lists), spots = list.spots;
+  document.getElementById("global-title").textContent = list.name;
+  // Each sort's number for a spot, highest first; spots with no forecast go last
+  const SORTS = [
+    ["default", "Default", null],
+    ["snow", "Snowfall", d => d.ahead],
+    ["sun", "Most sun this weekend", d => d.weekend?.sun],
+    ["dry", "Least precip this weekend", d => (d.weekend ? -d.weekend.precip : null)],
+  ];
+  const score = SORTS.find(s => s[0] === list.sort)?.[2];
+  const shown = score
+    ? [...spots].sort((a, b) => (score(favData.get(b.id) ?? {}) ?? -Infinity) - (score(favData.get(a.id) ?? {}) ?? -Infinity))
+    : spots;
+  holder.innerHTML = `<div class="fav-bar">
+      <h2 class="fav-title">${escHtml(list.name)}</h2>
+      <button type="button" class="fav-btn" data-list-act="rename">Rename list</button>
+      ${lists.length > 1 ? '<button type="button" class="fav-btn" data-list-act="delete">Delete list</button>' : ""}
+      ${spots.length > 1 ? `<span class="muted small fav-sort-label">Sort by</span>
+      <div class="range-bar" id="fav-sort">${SORTS.map(([v, label]) =>
+        `<button type="button" class="range-btn${list.sort === v ? " active" : ""}" data-sort="${v}" aria-pressed="${list.sort === v}">${label}</button>`).join("")}</div>` : ""}
+    </div>` +
+    (!spots.length ? `<section class="card"><p class="muted">Nothing in this list yet. Open the <b>Map</b> from this menu, click a spot,
+      pick <b>${escHtml(list.name)}</b> in its window, name the spot and press <b>Save</b>.</p></section>` : "") +
+    shown.map(f => {
+      const d = favData.get(f.id), i = spots.indexOf(f);
+      return `<section class="card mtn-card fav-card" data-id="${f.id}" data-href="?lat=${f.lat}&lon=${f.lon}&ft=${f.ft}">
+        <div class="storm-head fav-head">
+          <h3><a href="?lat=${f.lat}&lon=${f.lon}&ft=${f.ft}">${escHtml(f.name)}</a></h3>
+          <span class="muted small">${f.lat.toFixed(4)}, ${f.lon.toFixed(4)} · ${f.ft.toLocaleString()} ft${d && !d.failed ? ` · next 16 days: <b class="snow-total">${r1(d.ahead)}"</b>` : ""}${d?.weekend
+            ? ` · ${d.weekend.label}: ${d.weekend.sun == null ? "–" : `${r0(d.weekend.sun)}%`} sun, ${r2(d.weekend.precip)}" precip` : ""}</span>
+          <span class="fav-tools">
+            <button type="button" class="fav-btn" data-act="up" title="Move up" aria-label="Move ${escHtml(f.name)} up"${i === 0 ? " disabled" : ""}>↑</button>
+            <button type="button" class="fav-btn" data-act="down" title="Move down" aria-label="Move ${escHtml(f.name)} down"${i === spots.length - 1 ? " disabled" : ""}>↓</button>
+            <button type="button" class="fav-btn" data-act="rename" title="Rename">Rename</button>
+            <button type="button" class="fav-btn" data-act="delete" title="Remove from this list">Remove</button>
+          </span>
+        </div>
+        ${!d || d.failed ? '<p class="muted small">No forecast right now.</p>' : `
+        <div id="fav-${f.id}-scroll" class="summary-scroll" tabindex="0" aria-label="${escHtml(f.name)} snow summary, scrolls sideways">
+          <div id="fav-${f.id}-inner" class="chart-wrap summary"><canvas id="chart-fav-${f.id}"></canvas></div>
+        </div>`}
+      </section>`;
+    }).join("") +
+    (spots.length ? (document.querySelector("#summary-scroll")?.closest(".card")?.querySelector(".line-key")?.outerHTML ?? "") : "") +
+    `<p class="source">Saved in this browser only. Models: forecast is the average of ${SNOW_MODELS} · already fallen is the GFS + HRRR record</p>`;
+
+  holder.querySelector(".fav-bar").onclick = e => {
+    const sort = e.target.closest("[data-sort]"), act = e.target.closest("[data-list-act]");
+    if (sort) {
+      updateList(l => { l.sort = sort.dataset.sort; });
+      drawFavorites();
+    } else if (act?.dataset.listAct === "rename") {
+      renameInPlace(holder.querySelector(".fav-title"), list.name, name => { updateList(l => { l.name = name; }); renderListMenu(); drawFavorites(); });
+    } else if (act?.dataset.listAct === "delete") {
+      if (!confirm(`Delete the list "${list.name}" and the ${spots.length} spot${spots.length === 1 ? "" : "s"} in it?`)) return;
+      saveLists(loadLists().filter(l => l.id !== list.id));
+      openListId = null;
+      renderFavorites();
+    }
+  };
+  holder.querySelectorAll(".fav-card").forEach(card => {
+    const id = card.dataset.id;
+    // Like Forecast Summaries, a click on the card opens that spot's full forecast; dragging the
+    // chart sideways and the buttons don't count
+    let scrolled = false;
+    card.querySelector(".summary-scroll")?.addEventListener("scroll", () => { scrolled = true; });
+    card.addEventListener("pointerdown", () => { scrolled = false; });
+    card.addEventListener("click", e => {
+      const btn = e.target.closest("[data-act]");
+      if (btn) { spotAction(id, btn.dataset.act); return; }
+      if (scrolled || e.target.closest("a, input")) return;
+      location.href = card.dataset.href;
+    });
+  });
+  shown.forEach(f => {
+    const d = favData.get(f.id);
+    if (!d || d.failed) return;
+    dailyScrolled.delete(`fav-${f.id}`); // a fresh chart opens on today again
+    dailyLeft.delete(`fav-${f.id}`);
+    summaryChart({ id: `fav-${f.id}`, rows: d.rows, history: d.hist, series: d.series });
+  });
+  if (listRenaming) { listRenaming = false; holder.querySelector('[data-list-act="rename"]').click(); }
+}
+
+// Changes the open list with `change(list)` and saves
+function updateList(change) {
+  const lists = loadLists(), list = openList(lists);
+  change(list);
+  saveLists(lists);
+}
+
+// Swaps `el`'s contents for a text box holding `value`; Enter or clicking away saves, Escape doesn't
+function renameInPlace(el, value, save) {
+  el.innerHTML = '<input class="fav-name" type="text" maxlength="60" aria-label="Name">';
+  const input = el.querySelector("input");
+  input.value = value;
+  input.focus();
+  input.select();
+  let finished = false; // saving redraws the page, which would blur the box and finish twice
+  const done = keep => {
+    if (finished) return;
+    finished = true;
+    if (keep && input.value.trim()) save(input.value.trim());
+    else drawFavorites();
+  };
+  input.addEventListener("keydown", e => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); });
+  input.addEventListener("blur", () => done(true));
+}
+
+function spotAction(id, act) {
+  const spots = openList().spots, i = spots.findIndex(f => f.id === id);
+  if (i < 0) return;
+  if (act === "up" || act === "down") {
+    const j = act === "up" ? i - 1 : i + 1;
+    if (j < 0 || j >= spots.length) return;
+    updateList(l => { [l.spots[i], l.spots[j]] = [l.spots[j], l.spots[i]]; l.sort = "default"; }); // the new order shows straight away
+    drawFavorites();
+  } else if (act === "rename") {
+    renameInPlace(document.querySelector(`.fav-card[data-id="${id}"] h3`), spots[i].name,
+      name => { updateList(l => { l.spots[i].name = name; }); drawFavorites(); });
+  } else if (act === "delete") {
+    if (!confirm(`Remove "${spots[i].name}" from this list?`)) return;
+    updateList(l => { l.spots.splice(i, 1); });
+    favData.delete(id);
+    drawFavorites();
+  }
+}
+
+// Under a map spot's Snow Summary: which lists already hold the spot, then a choice of list (or a
+// new one), a name, and Save. A click in here never reaches the window, which would open the full
+// forecast instead (each control replaces itself as it is clicked, so the window can't tell).
+function spotSaveButton(holder, lat, lon, ft) {
+  holder.onclick = e => e.stopPropagation();
+  const lists = loadLists();
+  const inLists = lists.filter(l => l.spots.some(s => s.lat === lat && s.lon === lon));
+  const savedLine = inLists.length ? `<span class="muted small">★ Saved in ${inLists.map(l => `<b>${escHtml(l.name)}</b>`).join(", ")}</span>` : "";
+  holder.innerHTML = `${savedLine}<button type="button" class="fav-btn">★ Save to a list</button>`;
+  holder.querySelector("button").onclick = () => {
+    const open = openList(lists);
+    holder.innerHTML = `${savedLine}
+      <select class="fav-name fav-pick" aria-label="List">${lists.map(l => `<option value="${l.id}"${l.id === open.id ? " selected" : ""}>${escHtml(l.name)}</option>`).join("")}
+        <option value="new">+ New list…</option></select>
+      <input class="fav-name fav-new-list" type="text" maxlength="60" placeholder="New list's name" aria-label="New list's name" hidden>
+      <input class="fav-name fav-spot-name" type="text" maxlength="60" placeholder="Name this spot" aria-label="Name this spot">
+      <button type="button" class="fav-btn" data-go>Save</button>`;
+    const pick = holder.querySelector(".fav-pick"), newList = holder.querySelector(".fav-new-list"), name = holder.querySelector(".fav-spot-name");
+    pick.onchange = () => { newList.hidden = pick.value !== "new"; (pick.value === "new" ? newList : name).focus(); };
+    name.focus();
+    const save = () => {
+      const all = loadLists();
+      let list = all.find(l => l.id === pick.value);
+      if (!list) {
+        list = { id: newId(), name: newList.value.trim() || `List ${all.length + 1}`, sort: "default", spots: [] };
+        all.push(list);
+      }
+      list.spots.push({ id: newId(), name: name.value.trim() || `${lat.toFixed(4)}, ${lon.toFixed(4)}`, lat, lon, ft: Math.round(ft) });
+      saveLists(all);
+      renderListMenu();
+      spotSaveButton(holder, lat, lon, ft);
+    };
+    holder.querySelector("[data-go]").onclick = save;
+    name.addEventListener("keydown", e => { if (e.key === "Enter") save(); });
+  };
 }
 
 // The storm a snow box reports, from day-by-day model snow (Map of "YYYY-MM-DD" -> inches): the
@@ -1881,7 +2142,7 @@ function historyUrl(loc) {
 //   showRain               the storm's rain is written in green after its snow water (snow chart)
 //   fmt       number => text without the inch mark; min: the least a day needs to count or be labelled
 //   splitBelow optional: a lighter day than this between two snowier stretches splits a storm (stormRuns)
-//   yTitle, tooltipLabel, plugins (extra chart plugins), grace (headroom above the bars, default "15%")
+//   dayIcon   optional: key => a weather symbol written under that day's date ("" for none)//   yTitle, tooltipLabel, plugins (extra chart plugins), grace (headroom above the bars, default "15%")
 // Storms in a list of day totals, as [from, to] positions. A storm is a run of back-to-back days
 // with at least `min` each; one drier day ends it. With `splitBelow`, a day under that amount with
 // a day of at least that much on both sides, inside the same run, is a lull between two storms: it
@@ -1973,7 +2234,9 @@ function dailyChart(o) {
   makeChart(`chart-${o.id}`, {
     type: "bar",
     data: {
-      labels: keys.map(k => [k === o.today ? "Today" : dateOf(k).toLocaleDateString([], { weekday: "short" }), md(k)]),
+      // Day, date, and (snow summary) the day's weather symbol under the date
+      labels: keys.map(k => [k === o.today ? "Today" : dateOf(k).toLocaleDateString([], { weekday: "short" }), md(k),
+        ...(o.dayIcon?.(k) ? [o.dayIcon(k)] : [])]),
       datasets: o.datasets(keys),
     },
     options: {
@@ -2036,6 +2299,7 @@ function summaryChart({ id, rows, history, series, avg: given }) {
   const avg = given ?? averageSnow(rows, series ?? modelSeries(rows));
   const ahead = avg.snow.map(v => v || 0), aheadSwe = avg.swe.map(v => v || 0);
 
+
   // Bucket every hour into its calendar day
   const days = new Map();
   const bucket = t => {
@@ -2044,11 +2308,17 @@ function summaryChart({ id, rows, history, series, avg: given }) {
     return days.get(key);
   };
   past.forEach(r => { const b = bucket(r.time); b.fallen += r.snow || 0; b.fallenSwe += r.swe || 0; b.fallenRain += r.rain || 0; });
+  // Cloud cover as in the daily forecast: the models' average, the GFS alone until they load
+  const drawn = (avg.series ?? []).filter(s => !s.snowOnly);
+  const cloudAvg = drawn.length > 1 ? averageAcross(drawn, "cloud") : [];
   rows.forEach((r, i) => {
     const b = bucket(r.time), part = r.isDay ? "day" : "night";
     b[part] += ahead[i];
     b[part + "Swe"] += aheadSwe[i]; // snow water, so each part's snow-to-water ratio can be worked out
     b.rain += (given?.rain ? given.rain[i] : r.rain) || 0; // the GFS rain, as on the SWE chart, unless `avg` has its own
+    // Daylight cloud cover, for the day's weather symbol (dayWeather), as in the daily forecast
+    const cloud = cloudAvg[i] ?? r.cloud;
+    if (r.isDay !== 0 && cloud != null) { b.cloudSum = (b.cloudSum || 0) + cloud; b.cloudHours = (b.cloudHours || 0) + 1; }
   });
   // Snow-to-water ratio of the forecast snow in one part of a day: total snow over total snow
   // water, which weights each hour by how much fell. Null if there is no snow.
@@ -2072,6 +2342,12 @@ function summaryChart({ id, rows, history, series, avg: given }) {
     fmt: r1,
     min: 0.05, // any day that shows 0.1" or more
     splitBelow: SNOW_LULL_IN, // a light day between two snowier stretches splits them into two storms
+    // The daily forecast's weather symbol under each forecast day's date (none for past days)
+    dayIcon: k => {
+      const d = days.get(k);
+      if (!d.cloudHours && !(d.day + d.night > 0)) return "";
+      return dayWeather(d.fallen + d.day + d.night, d.fallenRain + d.rain, d.cloudHours ? d.cloudSum / d.cloudHours : null)[0];
+    },
     yTitle: "inches of snow/rain",
     grace: "30%", // room for a rain label above the snow label
     datasets: keys => [
@@ -2231,6 +2507,17 @@ const mixHex = (from, to, t) => {
   return "#" + [0, 1, 2].map(i => Math.round(part(from, i) + (part(to, i) - part(from, i)) * k).toString(16).padStart(2, "0")).join("");
 };
 
+// A day's weather symbol and words, from its snow and rain (inches) and its daylight cloud cover
+// (%). Shared by the daily forecast and the Snow Summaries, so a day gets the same symbol in both.
+function dayWeather(snow, rain, cloud) {
+  return snow >= 6 ? ["❄️", "Heavy snow"] :
+    snow >= 0.3 ? ["🌨️", "Snow"] :
+    rain >= 0.1 ? ["🌧️", "Rain"] :
+    cloud == null ? ["", ""] :
+    cloud < 25 ? ["☀️", "Sunny"] :
+    cloud < 60 ? ["⛅", "Partly cloudy"] : ["☁️", "Cloudy"];
+}
+
 function renderDailyForecast() {
   const rows = allRows;
   if (!rows.length) return;
@@ -2270,12 +2557,7 @@ function renderDailyForecast() {
     const light = hrs.filter(h => h.isDay !== 0);
     const sky = light.length ? light : hrs;
     const cloud = total(sky, h => h.cloudAvg) / sky.length;
-    const [symbol, words] =
-      snow >= 6 ? ["❄️", "Heavy snow"] :
-      snow >= 0.3 ? ["🌨️", "Snow"] :
-      rain >= 0.1 ? ["🌧️", "Rain"] :
-      cloud < 25 ? ["☀️", "Sunny"] :
-      cloud < 60 ? ["⛅", "Partly cloudy"] : ["☁️", "Cloudy"];
+    const [symbol, words] = dayWeather(snow, rain, cloud);
     // Wind symbol on windy days, in the wind rose's colour for the day's strongest wind
     const peak = Math.max(...hrs.map(h => h.wind ?? 0)), gust = Math.max(...hrs.map(h => h.gust ?? 0));
     const windColor = SPEED_BINS[peak >= 30 ? 3 : peak >= 20 ? 2 : 1].color;
@@ -2583,13 +2865,14 @@ function modelSeries(rows, li = 0, data = modelData) {
   const pick = (arr, r) => { const i = at.get(r.time); return arr && i != null ? arr[i] : null; };
   const none = rows.map(() => null);
   return MODELS.map(m => {
-    const snowfall = h[`snowfall_${m.id}`], cloud = h[`cloud_cover_${m.id}`];
-    // Open-Meteo reports snowfall at a fixed 7:1 ratio. Convert back to snow water (SWE), then
-    // apply the same Kuchera ratio to every model so the lines differ only in precipitation.
-    // The GFS line uses the page's own figures so it matches the tiles.
+    const water = h[`snowfall_water_equivalent_${m.id}`], cloud = h[`cloud_cover_${m.id}`];
+    // Each model's own snow water (SWE), which Open-Meteo gives directly: its precipitation minus
+    // its rain. (Its snowfall can't be used: each model makes it at its own ratio, the NBM's about
+    // 12 to 1, the NAM's 7 to 1.) The same Kuchera ratio then turns every model's water into snow,
+    // so the lines differ only in precipitation. The GFS line uses the page's own figures, worked
+    // out the same way, so it matches the tiles.
     const isMain = m.id === MODELS[0].id;
-    const swe = isMain ? rows.map(r => r.swe)
-      : rows.map(r => { const v = pick(snowfall, r); return v == null ? null : v / 7; });
+    const swe = isMain ? rows.map(r => r.swe) : rows.map(r => pick(water, r));
     return {
       ...m,
       swe,
@@ -3900,7 +4183,7 @@ const TAB_REFRESH = {
   },
   models: () => loadModels(locations),
   stations: () => loadStations(),
-  "machine-learning": () => { mlData = null; mlPrecip = null; mlEnsemble = null; return showMachineLearning(); },
+  "machine-learning": () => { mlData = null; mlEnsemble = null; return showMachineLearning(); },
 };
 document.getElementById("refresh").addEventListener("click", () => {
   const note = document.getElementById("refresh-note");
@@ -3953,7 +4236,8 @@ document.getElementById("global-refresh").addEventListener("click", () => {
     return;
   }
   const mountains = !document.getElementById("view-mountains").hidden;
-  const urls = mountains ? mountainUrls : stormUrls;
+  const favorites = !document.getElementById("view-favorites").hidden;
+  const urls = favorites ? favUrls : mountains ? mountainUrls : stormUrls;
   const times = urls.map(u => apiFetchedAt.get(u)).filter(t => t != null);
   const wait = times.length ? API_FRESH_MS - (Date.now() - Math.min(...times)) : 0;
   if (wait > 0) {
@@ -3961,7 +4245,8 @@ document.getElementById("global-refresh").addEventListener("click", () => {
     say(`Up to date. New data can be fetched in ${mins} minute${mins === 1 ? "" : "s"}.`);
     return;
   }
-  const redraw = mountains ? () => { mountainsShown = false; return renderMountainForecasts(); }
+  const redraw = favorites ? () => renderFavorites(true)
+    : mountains ? () => { mountainsShown = false; return renderMountainForecasts(); }
     : () => { stormResultsShown = false; return renderStormResults(); };
   redraw().then(() => say("Refreshed.")).catch(err => console.warn("Refresh failed", err));
 });
@@ -3974,7 +4259,7 @@ document.addEventListener("click", e => menus.forEach(m => { if (!m.contains(e.t
 document.addEventListener("keydown", e => { if (e.key === "Escape") menus.forEach(m => { m.open = false; }); });
 document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener("click", () => {
   const view = btn.dataset.view;
-  for (const v of ["forecast", "machine-learning", "metrics", "models", "stations", "cams", "guide", "info", "storms", "mountains", "cameras", "allstations", "map"]) document.getElementById(`view-${v}`).hidden = v !== view;
+  for (const v of ["forecast", "machine-learning", "metrics", "models", "stations", "cams", "guide", "info", "favorites", "storms", "mountains", "cameras", "allstations", "map"]) document.getElementById(`view-${v}`).hidden = v !== view;
   document.querySelectorAll(".tab[data-view]").forEach(b => {
     b.classList.toggle("active", b === btn);
     b.setAttribute("aria-pressed", b === btn);
@@ -3983,12 +4268,14 @@ document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener
   menus.forEach(m => { m.open = false; });
   infoMenu.querySelector("summary").classList.toggle("active", view === "guide" || view === "info");
   // Storm Results and Weather Cameras cover every resort, so the header shows their name instead
-  const global = { storms: "Storm Results", mountains: "Forecast Summaries", cameras: "Weather Cameras", allstations: "Weather Stations", map: "Map" }[view];
+  const global = { favorites: "Favorites", storms: "Storm Results", mountains: "Forecast Summaries", cameras: "Weather Cameras", allstations: "Weather Stations", map: "Map" }[view];
   document.body.classList.toggle("global-mode", !!global);
   document.getElementById("global-title").textContent = global || "";
   document.querySelector("#area-menu summary").classList.toggle("active", !!global);
   // "Resort Forecasts" in that menu is ticked while a resort's own page is showing
   document.getElementById("resort-forecasts").classList.toggle("active", !global && !POINT);
+  renderListMenu(); // the open list is highlighted in the menu only while its page shows
+  if (view === "favorites") renderFavorites().catch(err => console.warn("List unavailable", err));
   if (view === "storms") renderStormResults().catch(err => console.warn("Storm results unavailable", err));
   if (view === "mountains") renderMountainForecasts().catch(err => console.warn("Mountain forecasts unavailable", err));
   if (view === "allstations") renderAllStations().catch(err => console.warn("Weather stations unavailable", err));
@@ -4011,6 +4298,7 @@ document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener
   Object.values(charts).forEach(c => c.resize());
 }));
 // The Cams tab is only there for a resort with cams listed in AREAS, and Weather Stations for one with stations
+renderListMenu(); // the saved-spot lists in the Locations menu
 if (!AREA.cams) document.querySelector('.tab[data-view="cams"]').remove();
 if (!AREA.stations.length) document.querySelector('.tabs[data-area-pages] .tab[data-view="stations"]').remove();
 // The Machine Learning tab is on Alta's page only, for now

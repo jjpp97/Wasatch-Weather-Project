@@ -20,7 +20,7 @@ ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 # Open-Meteo's name for each ensemble in the request, and the ending of its fields in the reply
 ENSEMBLES = {"gefs": ("gfs_seamless", "ncep_gefs_seamless"), "ecmwf_ens": ("ecmwf_ifs025", "ecmwf_ifs025_ensemble")}
-VARS = ("precipitation", "snowfall", "temperature_2m")
+VARS = ("precipitation", "snowfall_water_equivalent", "temperature_2m")
 
 
 def query(models):
@@ -49,7 +49,7 @@ def members(h, ending):
 def daily_rows(times, run, today, model, member):
     """One member's hourly forecast as one row per Mountain-time day."""
     f = pd.DataFrame({"local": pd.to_datetime(times), **{v: pd.to_numeric(pd.Series(run.get(v)), errors="coerce") for v in VARS}})
-    f["swe"] = np.minimum(f["snowfall"] / 7, f["precipitation"])  # capped, as everywhere on the tab
+    f["swe"] = f["snowfall_water_equivalent"]  # the run's own snow water, as everywhere on the site
     f["snow"] = f["swe"] * forecasts.kuchera(f["temperature_2m"])
     f["day"] = f["local"].dt.date
     g = f.groupby("day")

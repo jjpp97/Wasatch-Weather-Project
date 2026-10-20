@@ -20,6 +20,7 @@ def write(kind, df, months=None):
     """Write `df` (with a UTC `time` column) month by month; `months` limits which months ("YYYY-MM")."""
     folder = config.ARCHIVE_DIR / kind
     folder.mkdir(parents=True, exist_ok=True)
+    df = df.assign(time=pd.to_datetime(df["time"], utc=True))  # old and new rows can differ in time precision
     month = df["time"].dt.strftime("%Y-%m")
     for m, part in df.groupby(month):
         if months is not None and m not in months:

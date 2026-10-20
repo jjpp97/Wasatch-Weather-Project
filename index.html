@@ -23,6 +23,10 @@
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
       </summary>
       <nav class="menu-list" aria-label="Locations">
+        <!-- The lists of spots saved from the Map (Favorites first), then "+ New list" (renderListMenu in
+             app.js). Each opens the list page through the hidden button, which switches pages like any other. -->
+        <div id="list-menu"></div>
+        <button type="button" class="tab" id="lists-open" data-view="favorites" aria-pressed="false" hidden>Lists</button>
         <!-- Every resort's measured snow on one page (renderStormResults in app.js) -->
         <button type="button" class="tab" data-view="storms" aria-pressed="false">Storm Results</button>
         <!-- Every resort's Snow Summary on one page (renderMountainForecasts in app.js) -->
@@ -219,6 +223,11 @@
    </div>
 
    <!-- Storm Results (from the Locations menu): every resort's snow box, most storm snow first -->
+   <!-- A list of saved spots (from the Locations menu): the Snow Summary of every spot in it -->
+   <div id="view-favorites" hidden>
+    <div id="favorites"></div>
+   </div>
+
    <div id="view-storms" hidden>
     <!-- One card per resort, each a link to that resort's forecast (renderStormResults in app.js) -->
     <div id="storm-results"></div>
@@ -291,7 +300,7 @@
 
     <section class="card">
       <h2>Snow Summary <span class="muted small">(plain average · GFS + HRRR, NBM and NAM, as on the Forecast tab)</span></h2>
-      <p class="ml-explain">The three models averaged evenly, as on the Forecast tab, except that no model's snow water may be more than its own precipitation (see How it works).</p>
+      <p class="ml-explain">The three models averaged evenly, exactly as the Forecast tab shows them.</p>
       <h3 class="sub-head">Upcoming <span id="ml-total-0a" class="ml-total"></span></h3>
       <div class="summary-scroll"><div class="chart-wrap ml-chart ml-up"><canvas id="chart-ml-up-0a"></canvas></div></div>
       <h3 class="sub-head">Track record <span class="muted">(forecast vs. measured at Mid Collins)</span></h3>
@@ -688,8 +697,7 @@
         <li><b>The small darker blue number beside each storm total:</b> the storm's snow water (SWE) in inches, from the same models as the snow. It covers the same thing as the large number next to it: the whole storm, or for a storm under way only what is still to come. Under a very short bracket the word "SWE" is left off to save room.</li>
         <li><b>Rain bars:</b> each day's rain, in inches of water, is stacked in green on top of that day's snow (a darker green for rain that has already fallen). The white number above a bar is still the day's snow only; when the day has rain, its amount is written in green just under that. The scale on the right is inches for both, so remember that an inch of rain is far more water than an inch of snow. Storms are still picked out by their snow, so a day with only rain does not start or extend a storm.</li>
         <li><b>The small green number after it:</b> the rain in that storm, in inches of water, shown only when the storm has any. It uses the same rain figures as the SWE chart, and like the other two numbers it covers only what is still to come for a storm under way. Snow water plus rain is the storm's total water.</li>
-        <li><b>Storm totals:</b> a storm is a run of back-to-back days with at least 0.1" of snow each. One day with less than that ends the storm, so two bursts of snow separated by a dry day count as two storms. A light day of under 0.4" between two snowier stretches splits them too: it counts in neither storm, though its own bar still shows its snow. The total adds up everything in those bars, including the grey "already fallen" part if the storm has already started.</li>
-      </ul>
+        <li><b>Storm totals:</b> a storm is a run of back-to-back days with at least 0.1" of snow each. One day with less than that ends the storm, so two bursts of snow separated by a dry day count as two storms. A light day of under 0.4" between two snowier stretches splits them too: it counts in neither storm, though its own bar still shows its snow. The total adds up everything in those bars, including the grey "already fallen" part if the storm has already started.</li>      </ul>
       <p>This chart always shows the full range; the 24 h, 72 h, 7-day and 16-day tiles do not zoom it.</p>
     </section>
 
@@ -719,10 +727,10 @@
       <p>Each point is run through the same snow calculation with its own temperatures, so lower points get more rain and heavier snow. The models' grids are 2 to 3 km wide at best, so nearby points often share the same precipitation and differ mainly through temperature. The rest of the page uses <span data-fill="main">Mid-Collins</span> only.</p>
       <ul>
         <li><b>GFS + HRRR line:</b> the snow from the three steps above.</li>
-        <li><b>NBM and NAM lines:</b> Open-Meteo reports their snowfall at a fixed 7 to 1 ratio, so the page converts it back to snow water and applies the same Kuchera ratio. That way the lines differ only in how much precipitation each model expects.</li>
-        <li><b>ECMWF IFS line (pink):</b> the European centre's main model at 9 km, drawn for comparison only. It is not in the average, so it does not change the white line, the snow boxes or the Snow Summary. Its snowfall is converted the same way as NAM's.</li>
+        <li><b>NBM and NAM lines:</b> the page takes each model's own snow water (its precipitation minus its rain, as Open-Meteo gives it) and applies the same Kuchera ratio. That way the lines differ only in how much precipitation each model expects. (The models' own snowfall figures are not used: each makes them at its own snow ratio.)</li>
+        <li><b>ECMWF IFS line (pink):</b> the European centre's main model at 9 km, drawn for comparison only. It is not in the average, so it does not change the white line, the snow boxes or the Snow Summary. Its snow water is turned into snow the same way.</li>
       </ul>
-      <p class="eq">other model's snow = (its snowfall ÷ 7) × Kuchera ratio</p>
+      <p class="eq">other model's snow = its snow water × Kuchera ratio</p>
       <ul>
         <li><b>Average:</b> for each hour, the mean of the models that still have a forecast, then added up. NAM ends after about 2.5 days and NBM after about 11, so beyond that the average is the GFS alone.</li>
         <li><b>Labels on the thick lines:</b> where an average stays flat (changing less than 0.1") for a long stretch, the chart prints "Average", the total so far and, in brackets, the matching snow water.</li>
