@@ -245,7 +245,11 @@ td.ml-best { background: rgba(95, 211, 163, 0.16); color: var(--text); font-weig
 .fav-title { margin: 0 4px 0 0; font-size: 1.2rem; }
 .fav-sort-label { margin-left: auto; }
 .fav-bar .range-bar { margin: 0; }
+.fav-head { align-items: center; }
 .fav-head .fav-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+/* The value the list is sorted by, at the card's top right */
+.fav-metric { font-size: 1.05rem; font-weight: 700; color: var(--snow); white-space: nowrap; }
+.fav-metric span { font-size: 0.72rem; font-weight: 500; color: var(--muted); }
 .fav-btn { font: inherit; font-size: 0.78rem; color: var(--muted); cursor: pointer; background: var(--card);
   border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
 .fav-btn:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }

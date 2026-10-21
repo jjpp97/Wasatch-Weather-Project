@@ -1704,6 +1704,16 @@ function drawFavorites() {
     ["dry", "Least precip this weekend", d => (d.weekend ? -d.weekend.precip : null)],
   ];
   const score = SORTS.find(s => s[0] === list.sort)?.[2];
+  // The number the list is sorted by, in each card's top right corner (nothing when sorted by Default)
+  const metric = d => {
+    if (!d || d.failed || list.sort === "default") return "";
+    const w = d.weekend, text =
+      list.sort === "snow" ? `${r1(d.ahead)}" <span>next 16 days</span>` :
+      !w ? "–" :
+      list.sort === "sun" ? `${w.sun == null ? "–" : `${r0(w.sun)}%`} <span>sun · ${w.label}</span>` :
+      `${r2(w.precip)}" <span>precip · ${w.label}</span>`;
+    return `<span class="fav-metric">${text}</span>`;
+  };
   const shown = score
     ? [...spots].sort((a, b) => (score(favData.get(b.id) ?? {}) ?? -Infinity) - (score(favData.get(a.id) ?? {}) ?? -Infinity))
     : spots;
@@ -1722,14 +1732,13 @@ function drawFavorites() {
       return `<section class="card mtn-card fav-card" data-id="${f.id}" data-href="?lat=${f.lat}&lon=${f.lon}&ft=${f.ft}">
         <div class="storm-head fav-head">
           <h3><a href="?lat=${f.lat}&lon=${f.lon}&ft=${f.ft}">${escHtml(f.name)}</a></h3>
-          <span class="muted small">${f.lat.toFixed(4)}, ${f.lon.toFixed(4)} · ${f.ft.toLocaleString()} ft${d && !d.failed ? ` · next 16 days: <b class="snow-total">${r1(d.ahead)}"</b>` : ""}${d?.weekend
-            ? ` · ${d.weekend.label}: ${d.weekend.sun == null ? "–" : `${r0(d.weekend.sun)}%`} sun, ${r2(d.weekend.precip)}" precip` : ""}</span>
           <span class="fav-tools">
             <button type="button" class="fav-btn" data-act="up" title="Move up" aria-label="Move ${escHtml(f.name)} up"${i === 0 ? " disabled" : ""}>↑</button>
             <button type="button" class="fav-btn" data-act="down" title="Move down" aria-label="Move ${escHtml(f.name)} down"${i === spots.length - 1 ? " disabled" : ""}>↓</button>
             <button type="button" class="fav-btn" data-act="rename" title="Rename">Rename</button>
             <button type="button" class="fav-btn" data-act="delete" title="Remove from this list">Remove</button>
           </span>
+          ${metric(d)}
         </div>
         ${!d || d.failed ? '<p class="muted small">No forecast right now.</p>' : `
         <div id="fav-${f.id}-scroll" class="summary-scroll" tabindex="0" aria-label="${escHtml(f.name)} snow summary, scrolls sideways">
