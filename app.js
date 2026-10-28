@@ -258,11 +258,12 @@ async function loadForecast() {
   renderCharts(fc.slice(0, activeHours ?? fc.length));
   // The Machine Learning tab corrects this forecast's models
   if (mlShowing()) drawMachineLearning();
+  if (dsShowing()) showDownscale(); // the Beta Snow Summary converts snow water with this forecast's ratios
 }
 
 // The downloads behind each of a resort's tabs that have data, so the refresh button can tell
 // whether the open tab has anything over three minutes old. Filled as the downloads are made.
-const tabDownloads = { forecast: new Set(), models: new Set(), stations: new Set(), "machine-learning": new Set() };
+const tabDownloads = { forecast: new Set(), models: new Set(), stations: new Set(), "machine-learning": new Set(), metrics: new Set() };
 const track = (tabs, url) => { tabs.forEach(t => tabDownloads[t].add(new URL(url, location.href).href)); return url; };
 
 // The resort's name and the menu of other resorts, and every piece of wording on the page that names the resort or
@@ -4176,6 +4177,368 @@ async function checkRidgeWind(results) {
     `and was off by about ${r0(miss)} mph in a typical hour.`;
 }
 
+// ---------- Backcountry Ski Metrics: PRISM-downscaled Snow Summary (Beta) ----------
+// A trial of the statistical downscaling of Lewis & Steenburgh (2017), as in the University of
+// Utah Snow Ensemble. A model's precipitation is the average over its grid box, so each model's is
+// multiplied by how much wetter the forecast point is than a box one grid wide around it, in
+// PRISM's 1991–2020 normals: factor = PRISM at the point ÷ PRISM's mean over the box. The factors
+// (per point, model and month, kept to 0.5–3.0) are worked out once by scripts/prism_factors.py
+// into data/prism-factors.json. The fine models' boxes (2.5–3 km) are barely bigger than the
+// point, so their factors are near 1; the coarse ensembles' are 1.2–2.2 at Alta.
+// It only draws on this tab and changes nothing the other tabs show. Turn it off with DOWNSCALE_BETA.
+const DOWNSCALE_BETA = true;
+if (!DOWNSCALE_BETA) document.querySelectorAll(".ds-beta").forEach(el => el.remove());
+// The deterministic models, fetched one by one so each gets the factor for its own grid. HRRR and
+// GFS are separate here (the rest of the page uses Open-Meteo's GFS + HRRR blend as one model), so
+// the blended average below is of up to four models, not the Forecast tab's three.
+const DS_MODELS = [
+  { key: "hrrr", api: "ncep_hrrr_conus", name: "HRRR", color: "#ff8a5c", dash: [] },
+  { key: "gfs", api: "ncep_gfs013", name: "GFS", color: "#ff6fae", dash: [8, 3, 2, 3] },
+  { key: "nam", api: "ncep_nam_conus", name: "NAM", color: "#6cc3ff", dash: [2, 3] },
+  { key: "nbm", api: "ncep_nbm_conus", name: "NBM", color: "#ffd166", dash: [6, 3] },
+];
+// The ensembles on the plume chart. The GEFS comes on two grids: 0.25° for its first ~10.5 days,
+// then 0.5° to Day 16. Each member takes its 0.25° value while there is one and its 0.5° value
+// after, each times the factor for its own grid. `suffix` ends the member's key in the response.
+const DS_ENSEMBLES = [
+  { name: "GEFS", color: "#5fd3a3", parts: [
+    { api: "ncep_gefs025", key: "gefs025", suffix: "ncep_gefs025" },
+    { api: "ncep_gefs05", key: "gefs05", suffix: "ncep_gefs05" },
+  ] },
+  { name: "ECMWF ENS", color: "#b388ff", parts: [{ api: "ecmwf_ifs025", key: "ecmwf_ens", suffix: "ecmwf_ifs025_ensemble" }] },
+];
+const DS_PERIODS = [{ label: "24 h", hours: 24 }, { label: "72 h", hours: 72 }, { label: "7 days", hours: 168 }, { label: "16 days", hours: 384 }];
+let dsFactors = null;      // data/prism-factors.json
+const dsGrids = new Map(); // month (1–12) -> that month's PRISM normals over the Map's region, for spots off locations.json
+const dsModels = new Map(); // location id -> its { det, ens } downloads
+let dsPoint = 0;           // the forecast point shown: an index into `locations`
+const dsShowing = () => !document.getElementById("view-metrics").hidden;
+
+async function showDownscale() {
+  if (!DOWNSCALE_BETA) return;
+  const status = document.getElementById("ds-status");
+  if (!locations.length || !locRows[0]?.length) { status.textContent = "Waiting for the forecast to load…"; return; }
+  try {
+    dsFactors ??= await apiJson(track(["metrics"], "data/prism-factors.json"));
+  } catch {
+    status.textContent = "No downscaling factors yet (run scripts/prism_factors.py to make data/prism-factors.json).";
+    return;
+  }
+  drawDsPoints();
+  const li = dsPoint, loc = locations[li], rows = locRows[li];
+  document.querySelectorAll(".ds-point-name").forEach(el => { el.textContent = loc.name; });
+  // The page's times are already Mountain Time, so the month is the forecast's first hour's
+  const month = Number(rows[0].time.slice(5, 7));
+  let fac;
+  try {
+    fac = await dsFactorsAt(loc, month);
+  } catch (err) {
+    console.warn("PRISM normals unavailable", err);
+    status.textContent = "Couldn't load the PRISM normals right now.";
+    return;
+  }
+  if (li !== dsPoint) return; // another point was picked meanwhile
+  if (!fac) {
+    const r = dsFactors.region;
+    status.textContent = `${loc.name} is outside the area the PRISM factors cover (${r.south}° to ${r.north}° N, ` +
+      `${-r.west}° to ${-r.east}° W: Provo to Ogden, the Great Salt Lake's shore to Kamas), so there is nothing to downscale with.`;
+    document.getElementById("ds-table").innerHTML = "";
+    ["ds-note", "ds-ratio-note", "ds-plume-key", "ds-plume-note"].forEach(id => { document.getElementById(id).textContent = ""; });
+    for (const id of ["chart-ds-plume", "chart-ds-summary"]) { charts[id]?.destroy(); delete charts[id]; }
+    return;
+  }
+  let m = dsModels.get(loc.id);
+  if (!m) {
+    status.textContent = `Loading the models for ${loc.name}…`;
+    const params = { ...pointParams([loc]), forecast_days: 16, precipitation_unit: "inch" };
+    try {
+      const [det, ens, levels, history] = await Promise.all([
+        apiJson(track(["metrics"], "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({
+          ...params, hourly: "precipitation,snowfall_water_equivalent", models: DS_MODELS.map(d => d.api).join(",") })), { cache: "no-store" }),
+        apiJson(track(["metrics"], "https://ensemble-api.open-meteo.com/v1/ensemble?" + new URLSearchParams({
+          ...params, hourly: "snowfall_water_equivalent", models: DS_ENSEMBLES.flatMap(e => e.parts.map(p => p.api)).join(",") })), { cache: "no-store" }),
+        apiJson(track(["metrics"], dsRatioUrl(loc)), { cache: "no-store" }),
+        // The past days on the Snow Summary chart: the page's own record for its main point, and
+        // the same record fetched for any other (none if it fails)
+        li === 0 && snowHistory.length ? snowHistory
+          : apiJson(historyUrl(loc), { cache: "no-store" }).then(j => hourRows(j.hourly)).catch(() => []),
+      ]);
+      m = { det, ens, ratios: dsRatios(levels, loc), history };
+      dsModels.set(loc.id, m);
+    } catch (err) {
+      console.warn("Downscaled models unavailable", err);
+      if (li === dsPoint) status.textContent = "Couldn't load the models right now.";
+      return;
+    }
+    if (li !== dsPoint) return;
+  }
+  status.textContent = "";
+  drawDownscale(li, month, fac, m);
+}
+
+// One button per forecast point of the resort (none on a spot from the Map, which has only itself)
+function drawDsPoints() {
+  const bar = document.getElementById("ds-points");
+  bar.style.display = locations.length < 2 ? "none" : ""; // .range-bar's display: flex outranks `hidden`
+  bar.innerHTML = '<span class="muted small">Forecast point</span>' + locations.map((l, i) =>
+    `<button type="button" class="range-btn${i === dsPoint ? " active" : ""}" data-point="${i}" aria-pressed="${i === dsPoint}">` +
+    `${escHtml(l.name)} · ${l.elevation_ft.toLocaleString()} ft</button>`).join("");
+  bar.onclick = e => {
+    const btn = e.target.closest("[data-point]");
+    if (!btn || Number(btn.dataset.point) === dsPoint) return;
+    dsPoint = Number(btn.dataset.point);
+    showDownscale();
+  };
+}
+
+// This month's PRISM value (mm) and factors at the point's exact latitude and longitude. A forecast
+// point in locations.json has its factors saved by scripts/prism_factors.py; anywhere else (a spot
+// from the Map) they are worked out here from that month's normals in exactly the same way: PRISM
+// in the 800 m cell the point falls in ÷ the mean of the cells whose centres lie inside a box one
+// model grid wide, centred on the point. null outside the region the normals are saved for.
+async function dsFactorsAt(loc, month) {
+  const saved = dsFactors.points[loc.id];
+  if (saved && saved.lat === loc.lat && saved.lon === loc.lon) {
+    const pick = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v[month - 1]]));
+    return { mm: saved.prism_mm[month - 1], factors: pick(saved.factors), unclamped: pick(saved.unclamped), saved: true };
+  }
+  const reg = dsFactors.region, g = reg.grid;
+  if (loc.lat < reg.south || loc.lat > reg.north || loc.lon < reg.west || loc.lon > reg.east) return null;
+  if (!dsGrids.has(month)) {
+    const file = reg.files.replace("MM", String(month).padStart(2, "0"));
+    dsGrids.set(month, fetch(file).then(r => {
+      if (!r.ok) throw new Error(`${file} returned ${r.status}`);
+      return r.arrayBuffer();
+    }).then(b => new Uint16Array(b)) // little-endian, as every browser is
+      .catch(err => { dsGrids.delete(month); throw err; }));
+  }
+  const cells = await dsGrids.get(month);
+  const value = (r, c) => { const v = cells[r * g.cols + c]; return v === g.nodata || v == null ? null : v / g.scale; };
+  const at = value(Math.floor((g.north - loc.lat) / g.res), Math.floor((loc.lon - g.west) / g.res));
+  if (at == null) return null;
+  const kmLat = dsFactors.km_per_deg, kmLon = kmLat * Math.cos(loc.lat * Math.PI / 180);
+  const factors = {}, unclamped = {};
+  for (const [key, grid] of Object.entries(dsFactors.grids)) {
+    const halfLat = grid.deg ? grid.deg / 2 : grid.km / 2 / kmLat;
+    const halfLon = grid.deg ? grid.deg / 2 : grid.km / 2 / kmLon;
+    const c0 = Math.ceil((loc.lon - halfLon - g.west) / g.res - 0.5), c1 = Math.floor((loc.lon + halfLon - g.west) / g.res - 0.5);
+    const r0 = Math.ceil((g.north - loc.lat - halfLat) / g.res - 0.5), r1 = Math.floor((g.north - loc.lat + halfLat) / g.res - 0.5);
+    let sum = 0, n = 0;
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const v = value(r, c);
+        if (v != null) { sum += v; n++; }
+      }
+    }
+    const raw = n && sum > 0 ? at / (sum / n) : 1;
+    unclamped[key] = Math.round(raw * 1000) / 1000;
+    factors[key] = Math.min(Math.max(unclamped[key], dsFactors.clamp[0]), dsFactors.clamp[1]);
+  }
+  return { mm: at, factors, unclamped, saved: false };
+}
+
+// The Kuchera ratio for this tab only: the same as the rest of the page (kucheraSLR, the warmest
+// of the 2 m temperature and the 700–500 hPa temperatures) except that a pressure level lying below
+// the point's ground is left out. 700 hPa sits at about 3,000–3,150 m (9,900–10,300 ft), so on a
+// summit like Mt Baldy (11,068 ft) the rest of the page lets that warmer air beneath the point set
+// the ratio. `h` is a gfs_seamless hourly block with temperature_* and geopotential_height_* for
+// DS_LEVELS. Returns Map(time -> { ratio, skipped: how many levels were below ground }).
+const DS_LEVELS = [700, 650, 600, 550, 500];
+const dsRatioUrl = loc => "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({
+  ...pointParams([loc]), forecast_days: 16, models: "gfs_seamless", temperature_unit: "fahrenheit",
+  hourly: ["temperature_2m", ...DS_LEVELS.map(l => `temperature_${l}hPa`), ...DS_LEVELS.map(l => `geopotential_height_${l}hPa`)].join(","),
+});
+function dsRatios(data, loc) {
+  const h = data.hourly;
+  const ground = loc.elevation_ft * 0.3048;
+  // Heights come in metres unless the request asked for imperial units; checked rather than assumed
+  const toM = data.hourly_units?.[`geopotential_height_${DS_LEVELS[0]}hPa`] === "ft" ? 0.3048 : 1;
+  return new Map(h.time.map((t, i) => {
+    let skipped = 0;
+    const temps = [h.temperature_2m?.[i]];
+    for (const l of DS_LEVELS) {
+      const z = h[`geopotential_height_${l}hPa`]?.[i];
+      if (z != null && z * toM < ground) { skipped++; continue; } // below the point's ground
+      temps.push(h[`temperature_${l}hPa`]?.[i]);
+    }
+    return [t, { ratio: kucheraSLR(temps), skipped }];
+  }));
+}
+
+// Writes each bold line's total and factor where the line ends (dataset `endLabel`), moving
+// labels up or down so none overlap
+const dsEndLabels = {
+  id: "dsEndLabels",
+  afterDatasetsDraw(chart) {
+    const g = chart.ctx, area = chart.chartArea, H = 14;
+    g.save();
+    g.font = "600 11px " + Chart.defaults.font.family;
+    g.textBaseline = "middle";
+    g.lineWidth = 3;
+    g.strokeStyle = "#16212f"; // card background, so the text stays readable over other lines
+    const wanted = [];
+    chart.data.datasets.forEach((d, idx) => {
+      if (!d.endLabel || !chart.isDatasetVisible(idx)) return;
+      let last = d.data.length - 1;
+      while (last >= 0 && d.data[last] == null) last--;
+      if (last < 0) return;
+      const pt = chart.getDatasetMeta(idx).data[last];
+      const text = d.endLabel(d.data[last]);
+      const w = g.measureText(text).width + 6;
+      // Written to the left of where the line ends, but never past either edge of the plot
+      const right = Math.max(Math.min(pt.x - 4, area.right - 2), area.left + w);
+      wanted.push({ text, right, left: right - w, lineY: pt.y, color: d.borderColor });
+    });
+    // Highest line first; each label tries just above its line, then further away each way
+    wanted.sort((a, b) => a.lineY - b.lineY);
+    const placed = [];
+    for (const l of wanted) {
+      const free = y => y - H / 2 >= area.top && y + H / 2 <= area.bottom &&
+        placed.every(p => p.right < l.left || p.left > l.right || Math.abs(p.y - y) >= H);
+      for (let k = 0; k < 40; k++) {
+        const y = l.lineY - 9 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * H;
+        if (free(y)) { placed.push({ ...l, y }); break; }
+      }
+    }
+    for (const l of placed) {
+      g.textAlign = "right";
+      g.strokeText(l.text, l.right, l.y);
+      g.fillStyle = l.color;
+      g.fillText(l.text, l.right, l.y);
+    }
+    g.restore();
+  },
+};
+
+function drawDownscale(li, month, fac, { det: detData, ens: ensData, ratios, history }) {
+  const loc = locations[li];
+  const rows = locRows[li];
+  const monthName = new Date(2000, month - 1, 1).toLocaleString([], { month: "long" });
+  const factor = key => fac.factors[key];
+  // Every hour from now on; snow from snow water with this tab's Kuchera ratio (dsRatios: levels
+  // below the ground left out), the rest of the page's where it has none, 10 to 1 past the end
+  const times = rows.map(r => r.time);
+  const ratio = new Map(rows.map(r => [r.time, ratios.get(r.time)?.ratio ?? r.kuchera]));
+  const onTimes = h => { const at = new Map(h.time.map((t, i) => [t, i])); return arr => times.map(t => (arr && at.has(t) ? arr[at.get(t)] : null)); };
+
+  // Deterministic models: raw and downscaled hourly snow water and snow
+  const pickDet = onTimes(detData.hourly);
+  const det = DS_MODELS.map(m => {
+    const f = factor(m.key);
+    const water = pickDet(detData.hourly[`snowfall_water_equivalent_${m.api}`]);
+    const precip = pickDet(detData.hourly[`precipitation_${m.api}`]);
+    const scaled = water.map(w => (w == null ? null : w * f));
+    const snowOf = ws => ws.map((w, i) => (w == null ? null : w * (ratio.get(times[i]) ?? 10)));
+    return { ...m, factor: f, precip, precipDs: precip.map(p => (p == null ? null : p * f)),
+      swe: water, sweDs: scaled, snow: snowOf(water), snowDs: snowOf(scaled) };
+  }).filter(m => m.swe.some(v => v != null));
+  if (!det.length) { document.getElementById("ds-status").textContent = "None of the models has data for this point right now."; return; }
+  // The blended average: the hour-by-hour mean of the models that still have data, as on the Forecast tab
+  const blend = { name: "Blend (average)", factor: null };
+  for (const k of ["swe", "sweDs", "snow", "snowDs", "precip", "precipDs"]) blend[k] = averageAcross(det, k, 1);
+
+  // Snow Summary table: each period's total, raw → downscaled
+  const total = (vals, n) => {
+    const part = vals.slice(0, n);
+    return { sum: part.reduce((a, v) => a + (v || 0), 0), partial: part.some(v => v == null) };
+  };
+  const cell = (s, n) => {
+    const raw = total(s.snow, n), ds = total(s.snowDs, n);
+    if (!s.snow.slice(0, n).some(v => v != null)) return `<td class="muted">–</td>`;
+    const ends = raw.partial ? ` class="muted" title="${s.name} ends before this period does: total through its last hour"` : "";
+    return `<td${ends}>${r1(raw.sum)}" → <b>${r1(ds.sum)}"</b>${raw.partial ? "*" : ""}</td>`;
+  };
+  const grid = key => { const g = dsFactors.grids[key]; return g.km ? `${g.km} km` : `${+g.deg.toFixed(3)}°`; };
+  document.getElementById("ds-table").innerHTML = `<thead><tr><th>Model</th><th>Grid</th><th>Factor (${monthName})</th>` +
+    DS_PERIODS.map(p => `<th>${p.label}</th>`).join("") + `</tr></thead><tbody>` +
+    det.map(m => `<tr><td>${m.name}</td><td>${grid(m.key)}</td><td>×${m.factor.toFixed(2)}</td>${DS_PERIODS.map(p => cell(m, p.hours)).join("")}</tr>`).join("") +
+    `<tr class="ds-blend"><td><b>${blend.name}</b></td><td></td><td></td>${DS_PERIODS.map(p => cell(blend, p.hours)).join("")}</tr></tbody>`;
+  const blendWater = n => `${r2(total(blend.swe, n).sum)}" → ${r2(total(blend.sweDs, n).sum)}"`;
+  const clamped = Object.keys(fac.factors).filter(k => fac.factors[k] !== fac.unclamped[k]);
+  document.getElementById("ds-note").innerHTML =
+    `Each cell is raw snow → <b>downscaled</b> snow for ${escHtml(loc.name)} (${loc.elevation_ft.toLocaleString()} ft), from now. ` +
+    `* the model ends before the period does. Blend snow water: 72 h ${blendWater(72)}, 16 days ${blendWater(384)}. ` +
+    `The blend counts HRRR and GFS as separate models while both run, so it is not the Forecast tab's average. ` +
+    `Factors worked out at this point's exact position (${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)}), where PRISM's ${monthName} normal is ` +
+    `${r1(fac.mm)} mm (${r2(fac.mm / 25.4)}")` +
+    (clamped.length ? `; held to ${dsFactors.clamp.join("–")}: ${clamped.map(k => `${dsFactors.grids[k].name} (×${fac.unclamped[k].toFixed(2)} before)`).join(", ")}` : "") + ".";
+
+  // How this tab's snow ratio compares with the rest of the page's, over the forecast's snow
+  // (each hour weighted by its downscaled snow water)
+  let water = 0, here = 0, there = 0, skippedHours = 0;
+  rows.forEach((r, i) => {
+    if (ratios.get(r.time)?.skipped) skippedHours++;
+    const w = blend.sweDs[i];
+    if (!(w > 0)) return;
+    water += w; here += w * ratio.get(r.time); there += w * r.kuchera;
+  });
+  const below = DS_LEVELS.filter(l => rows.some(r => (ratios.get(r.time)?.skipped ?? 0) > DS_LEVELS.indexOf(l)));
+  document.getElementById("ds-ratio-note").textContent = !skippedHours
+    ? `Snow ratio: every pressure level is above ${loc.name}'s ground, so the Kuchera ratio is the same as on the other tabs.`
+    : `Snow ratio: ${below.map(l => `${l} hPa`).join(" and ")} ${below.length > 1 ? "are" : "is"} below ${loc.name}'s ground in ` +
+      `${Math.round(100 * skippedHours / rows.length)}% of the forecast hours and left out of the Kuchera ratio here` +
+      (water > 0 ? `. Over the forecast's snow that gives ${ratioText(here / water)}, against ${ratioText(there / water)} with every level counted (the other tabs).` : ".");
+
+  // Snow Summary chart, as on the Forecast tab, from the downscaled blend. The past days are the
+  // same GFS + HRRR record as there, not downscaled.
+  summaryChart({ id: "ds-summary", rows, history,
+    avg: { snow: blend.snowDs, swe: blend.sweDs, rain: blend.precipDs.map((p, i) => (p == null ? null : Math.max(0, p - (blend.sweDs[i] ?? 0)))) } });
+
+  // Plume chart: every ensemble member's downscaled running total, thin, in its family's colour;
+  // each family's mean thick; the deterministic models' downscaled totals dashed; the blend white.
+  // The bold lines carry their total and factor at their ends (dsEndLabels), the key and the tooltip.
+  const famFactor = fam => fam.parts.map(p => `×${factor(p.key).toFixed(2)}`).join("→");
+  const pickEns = onTimes(ensData.hourly);
+  const memberKeys = suffix => Object.keys(ensData.hourly)
+    .filter(k => k.startsWith("snowfall_water_equivalent") && k.endsWith(`_${suffix}`))
+    .map(k => [k.replace(`_${suffix}`, "").replace("snowfall_water_equivalent", "") || "_control", k]);
+  const toSnow = (w, i) => (w == null ? null : w * (ratio.get(times[i]) ?? 10));
+  const sets = [];
+  const familyNotes = [];
+  for (const fam of DS_ENSEMBLES) {
+    // One running total per member, joining the family's grids hour by hour
+    const members = new Map();
+    for (const part of fam.parts) {
+      const f = factor(part.key);
+      for (const [member, key] of memberKeys(part.suffix)) {
+        const vals = pickEns(ensData.hourly[key]).map(w => (w == null ? null : w * f));
+        const have = members.get(member);
+        members.set(member, have ? have.map((v, i) => v ?? vals[i]) : vals);
+      }
+    }
+    const runs = [...members.values()].map(w => cumulative(w.map(toSnow)));
+    if (!runs.length) continue;
+    runs.forEach((data, n) => sets.push({ label: `${fam.name} member ${n}`, data, borderColor: fam.color + "59",
+      borderWidth: 1, pointRadius: 0, order: 3, isMember: true }));
+    const mean = times.map((_, i) => { const v = runs.map(r => r[i]).filter(x => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; });
+    sets.push({ label: `${fam.name} mean (${runs.length} members, ${famFactor(fam)})`, data: mean, borderColor: fam.color, backgroundColor: fam.color,
+      borderWidth: 4, pointRadius: 0, order: 1, endLabel: v => `${fam.name} ${r1(v)}" ${famFactor(fam)}` });
+    familyNotes.push(`${fam.name} ${fam.parts.map(p => `×${factor(p.key).toFixed(2)} (${grid(p.key)})`).join(" then ")}`);
+  }
+  det.forEach(m => sets.push({ label: `${m.name} (downscaled ×${m.factor.toFixed(2)})`, data: cumulative(m.snowDs), borderColor: m.color, backgroundColor: m.color,
+    borderWidth: 2, borderDash: m.dash, pointRadius: 0, order: 0, endLabel: v => `${m.name} ${r1(v)}" ×${m.factor.toFixed(2)}` }));
+  sets.push({ label: "Blend (downscaled)", data: cumulative(blend.snowDs), borderColor: "#ffffff", backgroundColor: "#ffffff",
+    borderWidth: 3, pointRadius: 0, order: 0, endLabel: v => `Blend ${r1(v)}"` });
+
+  const o = baseOptions({ y: { beginAtZero: true, position: "right", title: { display: true, text: "total snow (in)" } } }, 24);
+  o.animation = false; // over a hundred lines
+  o.plugins.legend.display = false; // the key under the chart
+  o.plugins.tooltip.filter = item => !item.dataset.isMember;
+  o.plugins.tooltip.itemSort = (a, b) => b.parsed.y - a.parsed.y;
+  o.plugins.tooltip.callbacks.label = ctx => `${ctx.dataset.label}: ${r1(ctx.parsed.y)}"`;
+  o.scales.x.title = { display: true, text: "Mountain Time" };
+  makeChart("chart-ds-plume", { type: "line", data: { labels: times, datasets: sets }, options: o, plugins: [dsEndLabels] });
+
+  const swatch = (color, width, dash = []) => `<svg viewBox="0 0 34 10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" ` +
+    `style="stroke:${color}" stroke-width="${width}" stroke-dasharray="${dash.join(" ")}"/></svg>`;
+  document.getElementById("ds-plume-key").innerHTML =
+    DS_ENSEMBLES.map(f => `<span>${swatch(f.color + "80", 1)}${f.name} members</span><span>${swatch(f.color, 4)}${f.name} mean ${famFactor(f)}</span>`).join("") +
+    det.map(m => `<span>${swatch(m.color, 2, m.dash)}${m.name} ×${m.factor.toFixed(2)}</span>`).join("") +
+    `<span>${swatch("#ffffff", 3)}Blend</span>`;
+  document.getElementById("ds-plume-note").textContent =
+    `Downscaled with ${monthName}'s factors: ${familyNotes.join(" · ")} · ` + det.map(m => `${m.name} ×${m.factor.toFixed(2)}`).join(" · ") + ".";
+}
+
 // ---------- Refresh button to the left of the resort tabs ----------
 // Refreshes only the tab that is open. Forecast gathers its forecast, model averages, model
 // record, measured snow and NWS text again; Spaghettis the model comparison; Weather Stations the
@@ -4193,6 +4556,7 @@ const TAB_REFRESH = {
   models: () => loadModels(locations),
   stations: () => loadStations(),
   "machine-learning": () => { mlData = null; mlEnsemble = null; return showMachineLearning(); },
+  metrics: () => { dsModels.clear(); return showDownscale(); },
 };
 document.getElementById("refresh").addEventListener("click", () => {
   const note = document.getElementById("refresh-note");
@@ -4290,6 +4654,7 @@ document.querySelectorAll(".tab[data-view]").forEach(btn => btn.addEventListener
   if (view === "allstations") renderAllStations().catch(err => console.warn("Weather stations unavailable", err));
   if (view === "stations") homeStationDetail(); // back from the Weather Stations page, if it was open there
   if (view === "machine-learning") showMachineLearning();
+  if (view === "metrics") showDownscale();
   showCameras(view === "cameras");
   showMountainCams(view === "cams");
   showMap(view === "map");

@@ -162,6 +162,37 @@
         drifting charts used to sit here (canvases chart-windrose, chart-loading and their -baldy
         twins); app.js still knows how to draw them and skips them while the canvases are absent. -->
    <div id="view-metrics" hidden>
+    <!-- Beta: PRISM-downscaled Snow Summary and snowfall plumes (DOWNSCALE_BETA and showDownscale in app.js).
+         Changes nothing on the other tabs. -->
+    <section class="card ds-beta">
+      <h2>Snow Summary <span class="beta-tag">Beta</span> <span class="muted small">(PRISM-downscaled · <span class="ds-point-name">Mid-Collins</span>)</span></h2>
+      <!-- One button per forecast point of the resort (drawDsPoints in app.js); hidden on a Map spot's page -->
+      <div id="ds-points" class="range-bar" aria-label="Forecast point shown" style="display:none"></div>
+      <p id="ds-status" class="muted small">Loading…</p>
+      <!-- Same chart as the Forecast tab's Snow Summary (summaryChart in app.js), from the downscaled blend -->
+      <div id="ds-summary-scroll" class="summary-scroll" tabindex="0" aria-label="Downscaled snow summary chart, scrolls sideways">
+        <div id="ds-summary-inner" class="chart-wrap summary"><canvas id="chart-ds-summary"></canvas></div>
+      </div>
+      <div class="line-key">
+        <span><i class="box" style="background:#8b9bb0"></i>Already fallen (model estimate, not downscaled)</span>
+        <span><i class="box" style="background:#9fd8ff"></i>Light snow, 14 to 1 or more</span>
+        <span><i class="box" style="background:#6cc3ff"></i>Average, 9 to 14 to 1</span>
+        <span><i class="box" style="background:#3f8cff"></i>Heavy, under 9 to 1</span>
+        <span><i class="box" style="background:#5fd3a3"></i>Rain</span>
+        <span><svg class="moon" viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 8.6A5 5 0 1 1 5.2 1a4 4 0 0 0 4.3 7.6z"/></svg>Fell at night</span>
+      </div>
+      <p id="ds-ratio-note" class="muted small station-note"></p>
+      <div class="table-wrap"><table id="ds-table"></table></div>
+      <p id="ds-note" class="muted small station-note"></p>
+      <p class="source">Downscaling: PRISM 1991–2020 800 m precipitation normals, <a href="https://prism.oregonstate.edu" target="_blank" rel="noopener">PRISM Group, Oregon State University</a>; method after Lewis &amp; Steenburgh (2017) · <a href="https://open-meteo.com/" target="_blank" rel="noopener">Weather data by Open-Meteo.com</a></p>
+    </section>
+    <section class="card ds-beta">
+      <h2>Snowfall plumes <span class="beta-tag">Beta</span> <span class="muted small">(every ensemble run, downscaled · <span class="ds-point-name">Mid-Collins</span>)</span></h2>
+      <div class="chart-wrap tall"><canvas id="chart-ds-plume"></canvas></div>
+      <div id="ds-plume-key" class="line-key"></div>
+      <p id="ds-plume-note" class="muted small station-note"></p>
+      <p class="source">Ensembles: GEFS (31 runs) and ECMWF ENS (51 runs) · snow from snow water with the GFS's Kuchera ratio · PRISM Group, Oregon State University · <a href="https://open-meteo.com/" target="_blank" rel="noopener">Weather data by Open-Meteo.com</a></p>
+    </section>
     <section class="card in-development">
       <h2>Backcountry Ski Metrics</h2>
       <p>Some dumb shit I have in development.</p>
@@ -605,7 +636,7 @@
         <li><b>Comparison models:</b> the NBM (the National Weather Service's blend of many models, about 11 days) and the NAM (about 2.5 days). The ECMWF AI model appears on the cloud chart only.</li>
         <li><b>National Weather Service:</b> the text forecast at the bottom of the Forecast tab.</li>
       </ul>
-      <p>The page has four tabs under the location name. <b>Forecast</b> holds the summary charts, daily forecast and tiles. <b>Backcountry Ski Metrics</b> is in development and empty for now. <b>Spaghettis</b> holds the charts that compare the individual models, snowfall and cloud cover. <b>Weather Stations</b> holds measured readings.</p>
+      <p>The page has four tabs under the location name. <b>Forecast</b> holds the summary charts, daily forecast and tiles. <b>Backcountry Ski Metrics</b> is in development; it holds a Beta Snow Summary and snowfall plumes downscaled with PRISM, a trial that changes nothing on the other tabs. <b>Spaghettis</b> holds the charts that compare the individual models, snowfall and cloud cover. <b>Weather Stations</b> holds measured readings.</p>
       <p>The four snow tiles on the Forecast tab are buttons. Click one to make the time-based charts show only that period: 24 hours, 72 hours, 7 days or 16 days. The Spaghettis tab has the same choice as a row of buttons, and the two stay in step.</p>
       <p>Every chart with a time axis starts at midnight today, and on the 16-day view they all end on the same day, with their scales in a column of the same width on the right. That puts each day at the same place across the page on the Snow Summary, the Daily Forecast buttons, and the temperature, SWE, wind, ratio and model charts. Today's hours before now are dimmed, with a dashed "Now" line: they are the model's record of the day so far, not measurements. Snow totals and the snow tiles still count from now.</p>
     </section>

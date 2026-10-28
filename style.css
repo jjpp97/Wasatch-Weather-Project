@@ -309,6 +309,10 @@ td.ml-best { background: rgba(95, 211, 163, 0.16); color: var(--text); font-weig
 .guide .now-demo b { align-self: flex-start; padding-left: 3px; color: #e6edf5; }
 
 /* Placeholder card for a tab that isn't built yet */
+/* Beta Snow Summary on the Backcountry Ski Metrics tab */
+.beta-tag { display: inline-block; padding: 1px 7px; margin-left: 4px; border-radius: 999px; font-size: 0.68rem; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; vertical-align: middle; color: #0e1621; background: #ffd166; }
+tr.ds-blend td { border-top: 1px solid var(--border); }
 .in-development { text-align: center; padding: 48px 16px; }
 .in-development p { margin: 6px 0 0; color: var(--muted); }
 
